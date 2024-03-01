@@ -1,7 +1,7 @@
 agent_hidden_size: 128
 agent_input_size: 13
 base_dir: .
-batch_size: 2
+batch_size: 32
 bezier_order: 7
 config: ./output/config_MODEL.yaml
 d_model: 128

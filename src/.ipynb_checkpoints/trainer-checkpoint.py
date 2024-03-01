@@ -202,8 +202,7 @@ class Trainer(object):
 
             if self.args.local_rank == 0:
                 loss_str = ', '.join([f"{loss_name}={loss_value:.5f}" for loss_name, loss_value in train_losses.items()])
-                self.logger.info(f'----Epoch {cur_epoch}, time/epoch={formatted_time(time.time() - start_time)}, \
-                                 learning_rate={learning_rate:.5f}, {loss_str}')
+                self.logger.info(f'----Epoch {cur_epoch}, time/epoch={formatted_time(time.time() - start_time)}, learning_rate={learning_rate:.5f}, {loss_str}')
                 if self.tb_log is not None:
                     self.tb_log.add_scalar('meta_data/learning_rate', learning_rate, cur_epoch)
                     for key, val in train_losses.items():
@@ -299,9 +298,8 @@ class Trainer(object):
             target_fde = target_fde.item() / total.item()
             traj_ade = traj_ade.item() / total.item()
             traj_fde = traj_fde.item() / total.item()
-            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, target_fde={target_fde:.5f}, \
-                             traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
-            if traj_ade > self.best_ade:
+            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, target_fde={target_fde:.5f}, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
+            if traj_ade < self.best_ade:
                 self.best_ade = traj_ade
                 self._save_checkpoint(epoch, best_epoch=True)  # save model
                 self.logger.info(f"Saved best checkpoint at epoch {epoch}")
