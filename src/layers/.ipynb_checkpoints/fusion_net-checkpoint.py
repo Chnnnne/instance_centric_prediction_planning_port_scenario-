@@ -49,7 +49,6 @@ class SftLayer(nn.Module):
         # 1. build memory
         src_x = node.unsqueeze(dim=0).repeat([n_token, 1, 1])  # (N, N, d_model)
         tar_x = node.unsqueeze(dim=1).repeat([1, n_token, 1])  # (N, N, d_model)
-        tmp = torch.cat([edge, src_x, tar_x], dim=-1)
         memory = self.proj_memory(torch.cat([edge, src_x, tar_x], dim=-1))  # (N, N, d_model)
         # 2. (optional) update edge (with residual)
         if self.update_edge:
@@ -73,7 +72,7 @@ class SftLayer(nn.Module):
 
 
 class FusionNet(nn.Module):
-    def __init__(self, d_model, d_edge, n_head=8, n_layers=6, dropout=0.1, update_edge=True):
+    def __init__(self, d_model, d_edge, n_head=4, n_layers=4, dropout=0.1, update_edge=True):
         super().__init__()
         fusion = []
         for i in range(n_layers):

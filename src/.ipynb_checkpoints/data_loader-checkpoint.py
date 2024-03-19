@@ -3,7 +3,7 @@ import torch
 import random
 from torch.utils.data import Dataset,DataLoader
 import pickle
-# from utils import get_dist_info
+from utils import get_dist_info
 
 class InterDataSet(Dataset):
     def __init__(self, dataset_dir, set_name):

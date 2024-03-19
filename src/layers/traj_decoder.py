@@ -1,61 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-class ResMLP(nn.Module):
-    def __init__(self, in_channel, out_channel, hidden=64, bias=True, activation="relu", norm='layer'):
-        super().__init__()
-
-        # define the activation function
-        if activation == "relu":
-            act_layer = nn.ReLU
-        elif activation == "relu6":
-            act_layer = nn.ReLU6
-        elif activation == "leaky":
-            act_layer = nn.LeakyReLU
-        elif activation == "prelu":
-            act_layer = nn.PReLU
-        else:
-            raise NotImplementedError
-
-        # define the normalization function
-        if norm == "layer":
-            norm_layer = nn.LayerNorm
-        elif norm == "batch":
-            norm_layer = nn.BatchNorm1d
-        else:
-            raise NotImplementedError
-
-        # insert the layers
-        self.linear1 = nn.Linear(in_channel, hidden, bias=bias)
-        self.linear2 = nn.Linear(hidden, out_channel, bias=bias)
-
-        self.norm1 = norm_layer(hidden)
-        self.norm2 = norm_layer(out_channel)
-
-        self.act1 = act_layer(inplace=True)
-        self.act2 = act_layer(inplace=True)
-
-        self.shortcut = None
-        if in_channel != out_channel:
-            self.shortcut = nn.Sequential(
-                nn.Linear(in_channel, out_channel, bias=bias),
-                norm_layer(out_channel)
-            )
-
-    def forward(self, x):
-        out = self.linear1(x)
-        out = self.norm1(out)
-        out = self.act1(out)
-        out = self.linear2(out)
-        out = self.norm2(out)
-
-        if self.shortcut:
-            out += self.shortcut(x)
-        else:
-            out += x
-        return self.act2(out)
-
+from .res_mlp import ResMLP
 
 class TrajDecoder(nn.Module):
     def __init__(self, input_size, hidden_size, n_order=7, m=50):
@@ -71,7 +17,7 @@ class TrajDecoder(nn.Module):
         )
         self.motion_estimator_layer = nn.Sequential(
             ResMLP(input_size + 2, hidden_size, hidden_size),
-            nn.Linear(hidden_size, n_order*2)
+            nn.Linear(hidden_size, (n_order+1)*2)
         )
         
         self.traj_prob_layer = nn.Sequential(
@@ -113,11 +59,11 @@ class TrajDecoder(nn.Module):
                                                         topk_indices.shape[2], 
                                                         feats_repeat.shape[-1])
         feats_traj = torch.gather(feats_repeat, dim=2, index=feat_indices) # B, N, m, D
-        feats_traj = torch.cat([feats_traj, target_pred], dim=-1) # B, N, m, D+2
+        param_input = torch.cat([feats_traj, target_pred], dim=-1) # B, N, m, D+2
 
-        param = self.motion_estimator_layer(feats_traj) # B,N,m,n_order*2
-        feats_traj = torch.cat([feats_traj, param], dim=-1)
-        traj_probs = self.traj_prob_layer(feats_traj).squeeze(-1) # B, N, m
+        param = self.motion_estimator_layer(param_input) # B,N,m,n_order*2
+        prob_input = torch.cat([feats_traj, param], dim=-1)
+        traj_probs = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, m
         
         # 预测轨迹(teacher_force)
         feat_traj_with_gt = torch.cat([feats.unsqueeze(2), target_gt], dim=-1) # B, N, 1, D+2

@@ -15,7 +15,7 @@ def get_parser():
         '--model_name', '-mn', default='MODEL', type=str,
         choices=['MODEL'], help='Type of architecture to use')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private2/wanggang/instance_model_data/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wanggang/instance_model_data/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
         '--batch_size', '-bs', default=32, type=int, help='number of batch size')
@@ -56,11 +56,11 @@ def get_parser():
         help="Save model weights and outputs every save_every epochs.")
     
     parser.add_argument(
-        '--start_validation', default=5, type=int,
+        '--start_validation', default=10, type=int,
         help="Validate the model starting from this epoch")
     # 1 for slow but accurate results, 20 for fast results
     parser.add_argument(
-        '--validate_every', '-ve', default=5, type=int,
+        '--validate_every', '-ve', default=10, type=int,
         help="Validate model every validate_every epochs")
     
     ##############################################################
@@ -84,22 +84,22 @@ def get_parser():
     parser.add_argument(
         '--agent_input_size', default=13, type=int)
     parser.add_argument(
-        '--agent_hidden_size', default=128, type=int)
+        '--agent_hidden_size', default=64, type=int)
     parser.add_argument(
         '--map_input_size', default=5, type=int)
     parser.add_argument(
-        '--map_hidden_size', default=128, type=int)
+        '--map_hidden_size', default=64, type=int)
     parser.add_argument(
         '--d_model', default=128, type=int)
 
     parser.add_argument(
         '--rpe_input_size', default=5, type=int)
     parser.add_argument(
-        '--rpe_hidden_size', default=128, type=int)
+        '--rpe_hidden_size', default=64, type=int)
     parser.add_argument(
         '--plan_input_size', default=4, type=int)
     parser.add_argument(
-        '--decoder_hidden_size', default=128, type=int)
+        '--decoder_hidden_size', default=64, type=int)
     parser.add_argument(
         '--bezier_order', default=7, type=int)
     parser.add_argument(

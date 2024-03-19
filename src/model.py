@@ -83,16 +83,16 @@ class Model(nn.Module):
         target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, tar_candidate, target_gt, candidate_mask)
            
         # 由贝塞尔控制点反推轨迹
-        bezier_param = torch.cat([param, pred_targets], dim=-1) # B, N, m, (n_order+1)*2
-        bezier_control_points = bezier_param.view(bezier_param.shape[0],
-                                                  bezier_param.shape[1],
-                                                  bezier_param.shape[2], -1, 2) # B, N, m, n_order+1, 2
+        # bezier_param = torch.cat([param, pred_targets], dim=-1) # B, N, m, (n_order+1)*2
+        bezier_control_points = param.view(param.shape[0],
+                                           param.shape[1],
+                                           param.shape[2], -1, 2) # B, N, m, n_order+1, 2
         trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,m,future_steps,2
         
-        bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
-        bezier_control_points_with_gt = bezier_param_with_gt.view(bezier_param_with_gt.shape[0],
-                                                          bezier_param_with_gt.shape[1],
-                                                          bezier_param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1, 2
+        # bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
+        bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
+                                                           param_with_gt.shape[1],
+                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1, 2
         traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
 
         return {"target_probs": target_probs,
