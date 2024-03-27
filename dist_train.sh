@@ -3,6 +3,7 @@
 set -x
 NGPUS=$1
 
+export OMP_NUM_THREADS=2
 while true
 do
     PORT=$(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
