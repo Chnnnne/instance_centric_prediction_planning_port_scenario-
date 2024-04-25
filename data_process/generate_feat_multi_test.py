@@ -53,10 +53,14 @@ def parse_log_data(log_data):
             if agent.HasField("connect_x"):
                 x = agent.connect_x
                 y = agent.connect_y
-                vel = agent.head_vel
+                if not agent.HasField("head_vel"):
+                    vel = agent.vel
+                else:
+                    vel = agent.head_vel
                 if not agent.HasField("head_vel_yaw"):
-                    return None
-                vel_yaw = agent.head_vel_yaw
+                    vel_yaw = agent.head_yaw
+                else:
+                    vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
                 width = agent.head_width
@@ -65,10 +69,14 @@ def parse_log_data(log_data):
                 offset = agent.length * kDefaultCenterOffsetRatio 
                 x = agent.x + offset * math.cos(agent.yaw)
                 y = agent.y + offset * math.sin(agent.yaw)
+                if not agent.HasField("head_vel"):
+                    vel = agent.vel
+                else:
+                    vel = agent.head_vel
                 if not agent.HasField("head_vel_yaw"):
-                    return None
-                vel = agent.head_vel
-                vel_yaw = agent.head_vel_yaw
+                    vel_yaw = agent.head_yaw
+                else:
+                    vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
                 width = agent.head_width
@@ -78,8 +86,9 @@ def parse_log_data(log_data):
                 y = agent.y - offset*math.sin(agent.yaw)
                 vel = agent.vel
                 if not agent.HasField("vel_yaw"):
-                    return None
-                vel_yaw = agent.vel_yaw
+                    vel_yaw = agent.yaw
+                else:
+                    vel_yaw = agent.vel_yaw
                 pos_yaw = agent.yaw
                 length = agent.length
                 width = agent.width
@@ -461,12 +470,8 @@ def load_seq_save_features(index):
     with open(pickle_path, "rb") as f:
         data = pickle.load(f)
     log_data = data['data']
-    
     cur_x, cur_y = log_data[0].vehicle_state_debug.xy.x, log_data[0].vehicle_state_debug.xy.y
     last_x, last_y = log_data[-1].vehicle_state_debug.xy.x, log_data[-1].vehicle_state_debug.xy.y
-    # 过滤位于非有效地图上的数据
-    if judge_undefined_scene(cur_x, cur_y) or judge_undefined_scene(last_x, last_y):
-        return
     data_info = parse_log_data(log_data)
     if data_info is None:
         return
@@ -475,9 +480,13 @@ def load_seq_save_features(index):
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
     for i in range(19, frame_num-50, 10):
         cur_t = ego_info['t'][i]
+        # 过滤位于非有效地图上的数据
+        if judge_undefined_scene( ego_info['x'][i],  ego_info['y'][i]):
+            continue
+        
         # 获取当前帧周围的障碍物和需要预测的障碍物id
         surr_ids, target_ids = get_agent_ids(data_info, cur_t)
-        if len(target_ids) == 0:
+        if len(target_ids) == 0: 
             continue
 
         # 计算目标障碍物的目标点等特征
@@ -543,7 +552,6 @@ def load_seq_save_features(index):
             pickle.dump(feat_data, f)
     return 
 
-    
 if __name__=="__main__": 
     map_file_path = "/fabupilot/release/resources/hdmap_lib/meishangang/map.bin"
     scene_type = 'port_meishan'
@@ -565,4 +573,3 @@ if __name__=="__main__":
     print("###########完成###############")
     pool.close()
     pool.join()
-    
