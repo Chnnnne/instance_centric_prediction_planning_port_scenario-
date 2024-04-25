@@ -18,12 +18,12 @@ class Loss(nn.Module):
     
     def forward(self, input_dict, output_dict, epoch=1):
         loss = 0.0
-        pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B, N    
+        pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B, N 标志哪个agent是有效的
         # 1、target_loss
-        gt_probs = input_dict['gt_candts'].float().cuda() # B, N, M 
+        gt_probs = input_dict['gt_candts'].float().cuda() # B, N, M     32 12 407
 
-        gt_probs = gt_probs[pred_mask] # S, M
-        pred_probs = output_dict['target_probs'][pred_mask]
+        gt_probs = gt_probs[pred_mask] # S, M     
+        pred_probs = output_dict['target_probs'][pred_mask] # B, N, M -> S, M    s个agent，m个预测点
         pred_num = pred_probs.shape[0]
         cls_loss = F.binary_cross_entropy(pred_probs, gt_probs, reduction='sum')/pred_num
         
@@ -44,7 +44,7 @@ class Loss(nn.Module):
         gt_idx = gt_probs.nonzero()[:pred_num] 
         pred_offsets = output_dict['pred_offsets'][pred_mask] # S, M, 2
         pred_offsets = pred_offsets[gt_idx[:, 0], gt_idx[:, 1]] # S, 2
-        offset_loss = F.smooth_l1_loss(pred_offsets, gt_tar_offset, reduction='sum')/pred_num
+        offset_loss = F.smooth_l1_loss(pred_offsets, gt_tar_offset, reduction='sum')/pred_num # 只算所有候选中离gt最近的候选tar point的gt offset和预测出来的改哦point的offset算loss
         
         # 2、motion reg loss
         traj_with_gt = output_dict['traj_with_gt'].squeeze(2)[pred_mask] # S, 50, 2

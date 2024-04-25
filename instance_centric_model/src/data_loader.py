@@ -29,7 +29,7 @@ class InterDataSet(Dataset):
         batch_size = len(batch_list)
         key_to_list = {}
         for key in batch_list[0].keys():
-            key_to_list[key] = [batch_list[bs_idx][key] for bs_idx in range(batch_size)]
+            key_to_list[key] = [batch_list[bs_idx][key] for bs_idx in range(batch_size)] #  key:key     val:list[val]
         
         input_dict = {}
         for key, val_list in key_to_list.items():
@@ -44,48 +44,48 @@ class InterDataSet(Dataset):
                 continue
         return input_dict
                 
-    def merge_batch_1d(self, tensor_list):
+    def merge_batch_1d(self, tensor_list):# agent feats:list[all_n,20,13]      agent mask: list[all_n,20]
         assert len(tensor_list[0].shape) in [2, 3]
         only_2d_tensor = False
         if len(tensor_list[0].shape) == 2:
-            tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list]
+            tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list] # [alln,2] -> [alln,2,1]      [bs,alln,2,1]
             only_2d_tensor = True
-        tensor_list = [x.unsqueeze(dim=0) for x in tensor_list]
-        max_feat0 = max([x.shape[1] for x in tensor_list])
-        _, _, num_feat1, num_feat2 = tensor_list[0].shape
+        tensor_list = [x.unsqueeze(dim=0) for x in tensor_list] #list[1, all_n,20,13]
+        max_feat0 = max([x.shape[1] for x in tensor_list]) # all_n-Max
+        _, _, num_feat1, num_feat2 = tensor_list[0].shape # [20,13]
         ret_tensor_list = []
         for k in range(len(tensor_list)):
-            cur_tensor = tensor_list[k]
+            cur_tensor = tensor_list[k] # [1, all_n,20,13]
             assert cur_tensor.shape[2] == num_feat1 and cur_tensor.shape[3] == num_feat2
 
-            new_tensor = cur_tensor.new_zeros(cur_tensor.shape[0], max_feat0, num_feat1, num_feat2)
-            new_tensor[:, :cur_tensor.shape[1], :, :] = cur_tensor
-            ret_tensor_list.append(new_tensor)
+            new_tensor = cur_tensor.new_zeros(cur_tensor.shape[0], max_feat0, num_feat1, num_feat2) # [1, all_n-Max,20,13]
+            new_tensor[:, :cur_tensor.shape[1], :, :] = cur_tensor # [1, all_n-Max,20,13]
+            ret_tensor_list.append(new_tensor) # list[1, all_n-Max,20,13]
 
-        ret_tensor = torch.cat(ret_tensor_list, dim=0)  # (num_stacked_samples, num_feat0_maxt, num_feat1, num_feat2)
+        ret_tensor = torch.cat(ret_tensor_list, dim=0)  # [bs, all_n-Max,20,13]
         if only_2d_tensor:
             ret_tensor = ret_tensor.squeeze(dim=-1)
         return ret_tensor
     
-    def merge_batch_2d(self, tensor_list):
+    def merge_batch_2d(self, tensor_list): # tar_candidate:  list[all_n, Max-N, 2]
         assert len(tensor_list[0].shape) in [2, 3]
         only_2d_tensor = False
         if len(tensor_list[0].shape) == 2:
             tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list]
             only_2d_tensor = True
-        tensor_list = [x.unsqueeze(dim=0) for x in tensor_list]
-        max_feat0 = max([x.shape[1] for x in tensor_list])
-        max_feat1 = max([x.shape[2] for x in tensor_list])
+        tensor_list = [x.unsqueeze(dim=0) for x in tensor_list] # list[1, all_n, Max-N, 2]
+        max_feat0 = max([x.shape[1] for x in tensor_list]) # all_n-Max
+        max_feat1 = max([x.shape[2] for x in tensor_list]) # Max-N-Max
         
-        num_feat2 = tensor_list[0].shape[-1]
+        num_feat2 = tensor_list[0].shape[-1] # 2
         ret_tensor_list = []
         for k in range(len(tensor_list)):
             cur_tensor = tensor_list[k]
-            new_tensor = cur_tensor.new_zeros(cur_tensor.shape[0], max_feat0, max_feat1, num_feat2)
+            new_tensor = cur_tensor.new_zeros(cur_tensor.shape[0], max_feat0, max_feat1, num_feat2) # 1, all_n-Max, Max-N-Max, 2
             new_tensor[:, :cur_tensor.shape[1], :cur_tensor.shape[2], :] = cur_tensor
             ret_tensor_list.append(new_tensor)
 
-        ret_tensor = torch.cat(ret_tensor_list, dim=0)  # (num_stacked_samples, num_feat0_maxt, num_feat1_maxt, num_feat2)
+        ret_tensor = torch.cat(ret_tensor_list, dim=0)  # bs,all_n-Max, Max-N-Max, 2
         if only_2d_tensor:
             ret_tensor = ret_tensor.squeeze(dim=-1)
         return ret_tensor

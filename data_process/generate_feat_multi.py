@@ -21,6 +21,10 @@ def judge_undefined_scene(x, y):
 
     
 def parse_log_data(log_data):
+    '''
+    得到以id为key，坐标等信息为val的字典
+    key = -1 代表ego
+    '''
     data_info = {}
     ego_id = -1
     kDefaultCenterOffsetRatio = 0.401
@@ -77,6 +81,9 @@ def parse_log_data(log_data):
                     vel_yaw = agent.head_yaw
                 else:
                     vel_yaw = agent.head_vel_yaw
+                vel = agent.head_vel
+                vel_yaw = agent.head_vel_yaw if agent.HasField('head_vel_yaw') else agent.head_yaw
+                # vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
                 width = agent.head_width
@@ -138,13 +145,17 @@ def get_agent_ids(data_info, cur_t):
         else:
             # 未来存在5s的真实轨迹
             if len(agent_info['t']) - index <= 50 \
-            or math.hypot(agent_info['x'][index]-agent_info['x'][index+50], agent_info['y'][index]-agent_info['y'][index+50]) < 5:
+            or math.hypot(agent_info['x'][index]-agent_info['x'][index+50], agent_info['y'][index]-agent_info['y'][index+50]) < 5 or\
+                index < 10:
                 surr_ids.append((id_, index))
             else:
                 target_ids.append((id_, index))
     return surr_ids, target_ids
 
 def transform_to_local_coords(feat, center_xy, center_heading, heading_index=-1, type_index = -1):
+    '''
+    以center_heading作为新坐标系的y轴
+    '''
     theta = math.pi/2 - center_heading
     rot = np.asarray([
         [np.cos(theta), np.sin(theta)],
@@ -184,11 +195,19 @@ def pad_array_list(array_list):
 
     # 填充数组为相同的维度并合并
     padded_array_list = [np.concatenate([arr, np.zeros((max_dim - arr.shape[0],) + arr.shape[1:])]) for arr in array_list]
-    merged_array = np.stack(padded_array_list)
+    merged_array = np.stack(padded_array_list) # N, Max_dim(Max point num), 2
     return merged_array
 
 def generate_future_feats(data_info: dict, target_ids: list):
+    '''
+        - tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2    n是target agent的个数， N（不定）是每个target的采样点的数量   Max-N是所有target agent分别采样点的数量的最大值
+        - gt_preds = np.stack(gt_preds) # n, 50, 2
+        - gt_tar_offset = np.stack(gt_tar_offset) # n, 2
+        - gt_candts = pad_array_list(gt_candts) # n,Max-N
+        - candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
+    '''
     n = len(target_ids)
+    # candiadate points、 未来真实轨迹的末端点、与真实轨迹末端点最近的candiadate point标志位、与真实轨迹末端点最近的candiadate point加上offset得到真实轨迹的末端点、mask
     tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = [], [], [], [], []
     valid_flag = False
     for i in range(n):
@@ -196,14 +215,14 @@ def generate_future_feats(data_info: dict, target_ids: list):
         agent_info = data_info[target_id]
         center_xy = np.array([agent_info['x'][cur_index], agent_info['y'][cur_index]])
         center_heading = agent_info['vel_yaw'][cur_index]
-        # 获取障碍物未来真实轨迹
+        # 获取障碍物未来真实轨迹 [50,2]
         agt_traj_fut = np.column_stack((agent_info['x'][cur_index+1:cur_index+51].copy(), agent_info['y'][cur_index+1:cur_index+51].copy())).astype(np.float32)
         agt_traj_fut = transform_to_local_coords(agt_traj_fut, center_xy, center_heading)
         # 采样目标点
         ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
-        candidate_points = mp_seacher.get_candidate_target_points(ori)
+        candidate_points = mp_seacher.get_candidate_target_points(ori) # △ (N,2)
         if len(candidate_points) == 0:
             candidate_points = np.zeros((1, 2))
             tar_candts_gt = np.zeros(1)
@@ -212,33 +231,103 @@ def generate_future_feats(data_info: dict, target_ids: list):
         else:    
             candidate_points = np.asarray(candidate_points)
             candidate_points = transform_to_local_coords(candidate_points, center_xy, center_heading)
-            tar_candts_gt, tar_offset_gt = get_candidate_gt(candidate_points, agt_traj_fut[-1, 0:2])
+            tar_candts_gt, tar_offset_gt = get_candidate_gt(candidate_points, agt_traj_fut[-1, 0:2]) # (N,) (2,)
             if math.hypot(tar_offset_gt[0], tar_offset_gt[1]) > 2:
                 candidate_points = np.zeros((1, 2))
                 tar_candts_gt = np.zeros(1)
                 tar_offset_gt = np.zeros(2)
                 candts_mask = np.zeros((1))
             else:
-                candts_mask = np.ones((candidate_points.shape[0]))
+                candts_mask = np.ones((candidate_points.shape[0])) # (N, )
                 valid_flag = True
         
-        tar_candidate.append(candidate_points)
-        gt_preds.append(agt_traj_fut)
-        gt_candts.append(tar_candts_gt)
-        gt_tar_offset.append(tar_offset_gt)
-        candidate_mask.append(candts_mask)
+        tar_candidate.append(candidate_points) # (n, N,2) n是target agent的个数， N（不定）是每个target的采样点的数量
+        gt_preds.append(agt_traj_fut) # (n, 50, 2)
+        gt_candts.append(tar_candts_gt) # (n, N,) 
+        gt_tar_offset.append(tar_offset_gt) # (n, 2,)
+        candidate_mask.append(candts_mask) # (n, N, )
             
     if not valid_flag:
         return None, None, None, None, None
     else:
-        tar_candidate = pad_array_list(tar_candidate) # N, M, 2
-        gt_preds = np.stack(gt_preds) # N, 50, 2
-        gt_tar_offset = np.stack(gt_tar_offset) # N, 2
-        gt_candts = pad_array_list(gt_candts)
-        candidate_mask = pad_array_list(candidate_mask)
+        tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2   Max-N是所有target agent分别采样点的数量的最大值
+        gt_preds = np.stack(gt_preds) # n, 50, 2
+        gt_tar_offset = np.stack(gt_tar_offset) # n, 2
+        gt_candts = pad_array_list(gt_candts) # n,Max-N
+        candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
+    return tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask
+
+def generate_future_feats_path(data_info: dict, target_ids: list):
+    '''
+    path_candidate, gt_preds, gt_candts, candidate_mask
+        - tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2    n是target agent的个数， N（不定）是每个target的采样点的数量   Max-N是所有target agent分别采样点的数量的最大值
+        - gt_preds = np.stack(gt_preds) # n, 50, 2
+        - gt_tar_offset = np.stack(gt_tar_offset) # n, 2
+        - gt_candts = pad_array_list(gt_candts) # n,Max-N
+        - candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
+    '''
+    n = len(target_ids)
+    path_candidate, gt_preds, gt_candts, candidate_mask = [], [], [], []
+    valid_flag = False
+    for i in range(n):
+        target_id, cur_index = target_ids[i]
+        agent_info = data_info[target_id]
+        center_xy = np.array([agent_info['x'][cur_index], agent_info['y'][cur_index]])
+        center_heading = agent_info['vel_yaw'][cur_index]
+        # 获取障碍物未来真实轨迹 [50,2]
+        agt_traj_fut = np.column_stack((agent_info['x'][cur_index+1:cur_index+51].copy(), agent_info['y'][cur_index+1:cur_index+51].copy())).astype(np.float32)
+        agt_traj_fut = transform_to_local_coords(agt_traj_fut, center_xy, center_heading)
+        agt_traj_fut_all = np.column_stack((agent_info['x'][cur_index+1:].copy(), agent_info['y'][cur_index+1:].copy())).astype(np.float32)
+        # 采样目标点
+        ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
+               agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
+               agent_info['length'][cur_index], agent_info['width'][cur_index]]
+        # candidate_points = mp_seacher.get_candidate_target_points(ori) # △ (N,2)
+        candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
+        if len(candidate_points) == 0:
+            candidate_points = np.zeros((1, 2))
+            tar_candts_gt = np.zeros(1)
+            tar_offset_gt = np.zeros(2)
+            candts_mask = np.zeros((1))
+        else:    # 根据五秒的真实轨迹信息来标注哪一个候选path是gt（后面用于算交叉熵损失loss和基于候选path生成轨迹与真实轨迹对比算loss）
+            # candidate_points = np.asarray(candidate_points)
+            # candidate_points = transform_to_local_coords(candidate_points, center_xy, center_heading)
+            # tar_candts_gt, tar_offset_gt = get_candidate_gt(candidate_points, agt_traj_fut[-1, 0:2]) # (N,) (2,)
+            
+            # transform_refpath_to_local_coords
+            tar_candts_gt = mp_seacher.get_candidate_gt_refpath(agt_traj_fut_all, map_paths, candidate_refpaths_cord)
+            if math.hypot(tar_offset_gt[0], tar_offset_gt[1]) > 2:
+                candidate_points = np.zeros((1, 2))
+                tar_candts_gt = np.zeros(1)#
+                tar_offset_gt = np.zeros(2)
+                candts_mask = np.zeros((1))
+            else:
+                candts_mask = np.ones((candidate_points.shape[0])) # (N, )
+                valid_flag = True
+        
+        tar_candidate.append(candidate_points) # (n, N,2) n是target agent的个数， N（不定）是每个target的采样点的数量
+        gt_preds.append(agt_traj_fut) # (n, 50, 2)
+        gt_candts.append(tar_candts_gt) # (n, N,) 
+        gt_tar_offset.append(tar_offset_gt) # (n, 2,)
+        candidate_mask.append(candts_mask) # (n, N, )
+            
+    if not valid_flag:
+        return None, None, None, None, None
+    else:
+        tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2   Max-N是所有target agent分别采样点的数量的最大值
+        gt_preds = np.stack(gt_preds) # n, 50, 2
+        gt_tar_offset = np.stack(gt_tar_offset) # n, 2
+        gt_candts = pad_array_list(gt_candts) # n,Max-N
+        candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
     return tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask
 
 def generate_his_feats(data_info, agent_ids):
+    '''
+
+        - return: 所有agent，包含自身和surr agent、target agent的  instance-centric视角下的信息。 all_n = num of all agent
+            - agent_feats: [all_n, 20, 13]
+            - agent_mask: [all_n,20]
+    '''
     agent_feats, agent_masks = [], []
     for agent_id, end_index in agent_ids:
         agent_feat = np.zeros((20, 7))
@@ -265,26 +354,31 @@ def generate_his_feats(data_info, agent_ids):
     return np.stack(agent_feats), np.stack(agent_masks)
 
 def generate_plan_feats(data_info, target_ids, ego_index):
+    '''
+        在tagret-centric视角下，自车的未来50帧信息， n = target num
+        - plan_feat:   [n, 50, 4]   
+        - plan_mask:   [n, 50]
+    '''
     plan_traj = np.zeros((50, 4))
     plan_traj_mask = np.zeros(50)
     index = 0
     ego_info = data_info[-1]
-    while index < 50:
+    while index < 50: # plan_traj:自车的未来50帧轨迹 (50, 4)
         plan_index = ego_index + index + 1
         if plan_index >= len(ego_info['t']):
             break
         plan_traj[index] = np.array([ego_info['x'][plan_index], ego_info['y'][plan_index],
-                                      ego_info['vel'][plan_index], ego_info['vel_yaw'][plan_index]])
+                                      ego_info['vel'][plan_index], ego_info['vel_yaw'][plan_index]]) 
         plan_traj_mask[index] = 1
         index += 1
     plan_feat, plan_mask = [], []
     for agent_id, index in target_ids:
         agent_info = data_info[agent_id]
-        center_xy = np.array([agent_info['x'][index], agent_info['y'][index]])
+        center_xy = np.array([agent_info['x'][index], agent_info['y'][index]]) # ego_index帧对应的target agent的位置和朝向
         center_heading = agent_info['vel_yaw'][index]
         plan_traj_ = transform_to_local_coords(plan_traj.copy(), center_xy, center_heading, heading_index=3)
-        plan_feat.append(plan_traj_)
-        plan_mask.append(plan_traj_mask.copy())
+        plan_feat.append(plan_traj_) # [n, 50, 4]
+        plan_mask.append(plan_traj_mask.copy()) # [n, 50]
     return np.stack(plan_feat), np.stack(plan_mask)
 
 def pad_array(array, target_shape):
@@ -308,7 +402,7 @@ def get_lane_infos(lanes, center_point, center_heading, distance=10, radius=100,
         if lane.IsInJunction():
             continue
         lane_s, _ = lane.GetProjection(center_point)
-        lane_heading = lane.GetHeading(lane_s)
+        lane_heading = lane.GetHeading(lane_s) # ego观察点投影到lane的lane heading
         if lane.bi_direction_lane():
             diff_angle = normalize_angle(center_heading - lane_heading)
             if abs(diff_angle) > math.pi/2:
@@ -335,7 +429,6 @@ def get_lane_infos(lanes, center_point, center_heading, distance=10, radius=100,
         polyline_dir = get_polyline_dir(polyline[:, 0:2].copy())
         polyline = transform_to_local_coords(polyline, lane_ctr, lane_heading)
         polyline = np.concatenate((polyline[:, 0:2], polyline_dir, polyline[:, 2:]), axis=-1)
-   
         valid_num, point_dim =  min(num_points_each_polyline, polyline.shape[0]), polyline.shape[-1]
         cur_polyline = np.zeros((num_points_each_polyline, point_dim))
         cur_polyline_mask = np.zeros((num_points_each_polyline))
@@ -351,7 +444,7 @@ def get_lane_infos(lanes, center_point, center_heading, distance=10, radius=100,
     lane_polylines_mask = np.stack(lane_polylines_mask)
     lane_ctrs = np.stack(lane_ctrs)
     lane_vecs= np.stack(lane_vecs)
-    return lane_polylines, lane_polylines_mask, lane_ctrs, lane_vecs
+    return lane_polylines, lane_polylines_mask, lane_ctrs, lane_vecs        
 
 def get_junction_infos(junctions, distance=5.0, num_points_each_polyline=20):
     types_map = {"junction":0, "lane":1}
@@ -363,6 +456,7 @@ def get_junction_infos(junctions, distance=5.0, num_points_each_polyline=20):
             if "vessel_head_and_tail" in junction.attributes().attributes().values():
                 continue
         points= junction.polygon().points()
+        # my_utils.draw_points(points=points)
         points.append(points[0])
         s = [0] + [math.hypot(points[i].x() - points[i-1].x(), points[i].y() - points[i-1].y()) for i in range(1, len(points))]
         s = list(itertools.accumulate(s))
@@ -465,7 +559,59 @@ def generate_rpe_feats(ctrs, vecs):
     rpe_mask = np.ones((rpe.shape[0], rpe.shape[0]))
     return rpe, rpe_mask
 
+
+def my_candidate_refpath_search_test(index):
+    pickle_path = cur_files[index]
+    print(pickle_path)
+    with open(pickle_path, "rb") as f:
+        data = pickle.load(f)
+    log_data = data['data']
+    
+    cur_x, cur_y = log_data[0].vehicle_state_debug.xy.x, log_data[0].vehicle_state_debug.xy.y
+    last_x, last_y = log_data[-1].vehicle_state_debug.xy.x, log_data[-1].vehicle_state_debug.xy.y
+    # 过滤位于非有效地图上的数据
+    if judge_undefined_scene(cur_x, cur_y) or judge_undefined_scene(last_x, last_y):
+        return
+    data_info = parse_log_data(log_data) # data_info: ego/agent's info,  key:id  val:info
+    ego_info = data_info[-1] # ego_info连续性保证？
+    frame_num = len(ego_info['t'])
+    vehicle_name = pickle_path.split('/')[-1].split('_')[0]
+    for i in range(19, frame_num-50, 10): # 10f间隔遍历ego的所有f obs:2s fut:5s
+        cur_t = ego_info['t'][i]
+        # 获取当前帧周围的障碍物和需要预测的障碍物id
+        surr_ids, target_ids = get_agent_ids(data_info, cur_t)
+        if len(target_ids) == 0:
+            continue
+        n = len(target_ids)
+        # print(,i)
+        for t in range(n):
+            target_id, cur_index = target_ids[t]
+            agent_info = data_info[target_id]
+            center_xy = np.array([agent_info['x'][cur_index], agent_info['y'][cur_index]])
+            center_heading = agent_info['vel_yaw'][cur_index]
+            # agt_traj_fut_5s = np.column_stack((agent_info['x'][cur_index+1:cur_index+51].copy(), 
+            #                                 agent_info['y'][cur_index+1:cur_index+51].copy())).astype(np.float64)
+            agt_traj_fut_all = np.column_stack((agent_info['x'][cur_index+1:].copy(), 
+                                            agent_info['y'][cur_index+1:].copy())).astype(np.float64) 
+            before_index = max(cur_index - 19,0)
+            agt_traj_his_2s = np.column_stack((agent_info['x'][before_index:cur_index+1].copy(), 
+                                            agent_info['y'][before_index:cur_index+1].copy())).astype(np.float64)
+            ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
+               agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
+               agent_info['length'][cur_index], agent_info['width'][cur_index]]
+            print(agent_info['vel_yaw'])
+            print(agent_info['vel_yaw'][cur_index])
+            print(agent_info['vel'])
+            candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori)
+
+            plot_utils.draw_candidate_refpaths_with_his_fut(ori,candidate_refpaths_cord, agt_traj_his_2s ,agt_traj_fut_all)
+            exit()
+
+
 def load_seq_save_features(index):
+    '''
+    对每个pkl: cur_files[idx]单独提取
+    '''
     pickle_path = cur_files[index]
     with open(pickle_path, "rb") as f:
         data = pickle.load(f)
@@ -476,7 +622,7 @@ def load_seq_save_features(index):
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    for i in range(19, frame_num-50, 10):
+    for i in range(19, frame_num-50, 10): # 10f间隔遍历ego的所有f obs:2s fut:5s
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
         if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
@@ -489,6 +635,12 @@ def load_seq_save_features(index):
 
         # 计算目标障碍物的目标点等特征
         tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
+        path_candidate, gt_preds, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
+        # gt_preds: target_n, 50, 2真实轨迹
+        # path_candidate: target_n, max-N,20（固定20）,2*3+2*3
+        # gt_candts: target_n, max-N 标记哪一个是真值candidate path，后面的path打分模块要算cross entropy loss
+        # candidate_mask: target_n，max-N 由于每个target agent的采样path数量不一样，故作pad
+        
         if tar_candidate is None:
             continue
         # 计算障碍物的历史特征
@@ -496,7 +648,7 @@ def load_seq_save_features(index):
         agent_ids.extend(target_ids)
         agent_ids.extend(surr_ids)
         agent_feats, agent_masks = generate_his_feats(data_info, agent_ids)
-        agent_ctrs, agent_vecs = [], []
+        agent_ctrs, agent_vecs = [], [] # 存储所有agent的obs点信息 (all_n,2) (all_n,2)
         for agent_id, index in agent_ids:
             agent_ctrs.append([data_info[agent_id]['x'][index], data_info[agent_id]['y'][index]])
             theta = data_info[agent_id]['vel_yaw'][index]
@@ -505,17 +657,17 @@ def load_seq_save_features(index):
         agent_vecs = np.asarray(agent_vecs)
 
         # 计算plan特征
-        plan_feat, plan_mask = generate_plan_feats(data_info, target_ids, i)
+        plan_feat, plan_mask = generate_plan_feats(data_info, target_ids, i) 
 
         # pad
         num = agent_feats.shape[0]
-        pad_tar_candidate = pad_array(tar_candidate, (num, tar_candidate.shape[1], tar_candidate.shape[2])) # N, M, 2
-        pad_gt_preds = pad_array(gt_preds, (num, gt_preds.shape[1], gt_preds.shape[2])) # N, 50, 2
-        pad_gt_candts = pad_array(gt_candts, (num, gt_candts.shape[1])) # N, M
-        pad_gt_tar_offset = pad_array(gt_tar_offset, (num, gt_tar_offset.shape[1])) # N, 2
-        pad_candidate_mask = pad_array(candidate_mask,(num, candidate_mask.shape[1])) # N, M
-        pad_plan_feat = pad_array(plan_feat, (num, plan_feat.shape[1], plan_feat.shape[2])) # N, 50, 4
-        pad_plan_mask = pad_array(plan_mask, (num, plan_mask.shape[1])) # N, 50
+        pad_tar_candidate = pad_array(tar_candidate, (num, tar_candidate.shape[1], tar_candidate.shape[2])) # all_n, max-N, 2
+        pad_gt_preds = pad_array(gt_preds, (num, gt_preds.shape[1], gt_preds.shape[2])) # all_n, 50, 2
+        pad_gt_candts = pad_array(gt_candts, (num, gt_candts.shape[1])) # all_n, max-N
+        pad_gt_tar_offset = pad_array(gt_tar_offset, (num, gt_tar_offset.shape[1])) # all_n, 2
+        pad_candidate_mask = pad_array(candidate_mask,(num, candidate_mask.shape[1])) # all_n, max-N
+        pad_plan_feat = pad_array(plan_feat, (num, plan_feat.shape[1], plan_feat.shape[2])) # all_n, 50, 4
+        pad_plan_mask = pad_array(plan_mask, (num, plan_mask.shape[1])) # all_n, 50
 
         # 计算地图特征
         map_feats, map_mask, map_ctrs, map_vecs = generate_map_feats(data_info[-1], i, radius=80)
@@ -532,17 +684,21 @@ def load_seq_save_features(index):
         feat_data['agent_vecs'] = agent_vecs.astype(np.float32)
         feat_data['agent_feats'] = agent_feats.astype(np.float32)
         feat_data['agent_mask'] = agent_masks.astype(np.int32)
+        
         feat_data['tar_candidate'] = pad_tar_candidate.astype(np.float32)
         feat_data['candidate_mask'] = pad_candidate_mask.astype(np.int32)
         feat_data['gt_preds'] = pad_gt_preds.astype(np.float32)
         feat_data['gt_candts'] = pad_gt_candts.astype(np.float32)
         feat_data['gt_tar_offset'] = pad_gt_tar_offset.astype(np.float32)
+
         feat_data['plan_feat'] = pad_plan_feat.astype(np.float32)
         feat_data['plan_mask'] = pad_plan_mask.astype(np.int32)
+
         feat_data['map_ctrs'] = map_ctrs.astype(np.float32)
         feat_data['map_vecs'] = map_vecs.astype(np.float32)
         feat_data['map_feats'] = map_feats.astype(np.float32)
         feat_data['map_mask'] = map_mask.astype(np.int32)
+
         feat_data['rpe'] = rpe.astype(np.float32)
         feat_data['rpe_mask'] = rpe_mask.astype(np.int32)
         save_path = str(cur_output_path) + f'/{vehicle_name}_{cur_t}.pkl'
@@ -551,17 +707,18 @@ def load_seq_save_features(index):
     return 
 
 if __name__=="__main__": 
+    '''
     map_file_path = "/fabupilot/release/resources/hdmap_lib/meishangang/map.bin"
     scene_type = 'port_meishan'
     HDMapManager.LoadMap(map_file_path, scene_type)
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    input_path = '/private2/wanggang/pre_log_inter_data'
+    input_path = '/private/wangchen/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = train_files
-    cur_output_path = '/private/wanggang/instance_centric_data/train'
+    cur_output_path = '/private/wangchen/instance_model_data_small/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
@@ -571,3 +728,28 @@ if __name__=="__main__":
     print("###########完成###############")
     pool.close()
     pool.join()
+    '''
+    import math, os, sys
+    from pathlib import Path
+    project_path = str(Path(__file__).resolve().parent.parent)
+    if project_path not in sys.path:
+        sys.path.append(project_path)
+        print(f"add project_path:{project_path} to python search path")
+    import common.math_utils as math_utils
+    import common.plot_utils as plot_utils
+    import common.map_utils as map_utils
+    hdmap = map_utils.get_hdmap()
+    mp_seacher = MapPointSeacher(hdmap, t=5.0)
+    input_path = '/private/wangchen/pre_log_inter_data_small'
+    all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
+    train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
+    cur_files = train_files
+    cur_output_path = '/private/wangchen/instance_model_data_small/train'
+    cur_output_path = Path(cur_output_path)
+    if not cur_output_path.exists():
+        cur_output_path.mkdir(parents=True)
+    print("start")
+    for i in range(21,len(cur_files)): # 19 error 21 draw
+        my_candidate_refpath_search_test(i)
+    print("complete")
+    

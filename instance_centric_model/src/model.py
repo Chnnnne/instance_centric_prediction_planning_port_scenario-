@@ -59,10 +59,10 @@ class Model(nn.Module):
             self.apply(self._init_weights)
         
     def forward(self, batch_dict):
-        agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() 
-        map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() 
-        agent_feats = self.agent_net(agent_polylines, agent_polylines_mask)
-        map_feats = self.map_net(map_polylines, map_polylines_mask)
+        agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() # [b,all_n-Max,20,13]  [b,all_n-Max,20]
+        map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() # [b, map_element_num-Max, 20, 5]   [b, map_element_num-Max, 20]
+        agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # [b,all_n-Max, d_agent]
+        map_feats = self.map_net(map_polylines, map_polylines_mask) # [b, map_element_num-Max,d_map]
         
         rpe, rpe_mask = batch_dict['rpe'].cuda(), batch_dict['rpe_mask'].cuda().bool()
         batch_size, N, _, _= rpe.shape
@@ -72,14 +72,14 @@ class Model(nn.Module):
         
         agent_mask = (agent_polylines_mask.sum(dim=-1) > 0)  
         map_mask = (map_polylines_mask.sum(dim=-1) > 0)  
-        agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask)
+        agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # [b,all_n-Max, d_agent]
         
         plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool()
-        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask)
+        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # ?
         
-        tar_candidate, candidate_mask = batch_dict['tar_candidate'].cuda(), batch_dict['candidate_mask'].cuda().bool() 
-        target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda()
-        target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # B, N, 1, 2
+        tar_candidate, candidate_mask = batch_dict['tar_candidate'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
+        target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
+        target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
         target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, tar_candidate, target_gt, candidate_mask)
            
         # 由贝塞尔控制点反推轨迹

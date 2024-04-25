@@ -5,6 +5,12 @@ import time
 import numpy as np
 import logging
 import torch.distributed as dist
+import os
+os.environ['MASTER_ADDR'] = 'localhost'
+os.environ['MASTER_PORT'] = '32153'
+os.environ['RANK'] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ['WORLD_SIZE'] = '1'
 
 def init_dist_pytorch(local_rank, backend='nccl'):
     num_gpus = torch.cuda.device_count()

@@ -14,8 +14,11 @@ def get_parser():
     parser.add_argument(
         '--model_name', '-mn', default='MODEL', type=str,
         choices=['MODEL'], help='Type of architecture to use')
+    # parser.add_argument(
+    #     '--dataset_dir', '-dd', default=f'/private/wanggang/instance_model_data/', type=str,
+    #     help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private/wanggang/instance_centric_data/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model_data_small/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
         '--batch_size', '-bs', default=8, type=int, help='number of batch size')

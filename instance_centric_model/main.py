@@ -8,7 +8,6 @@ from src.trainer import Trainer
 def main():
     args = main_parser()
     assert args.use_cuda == True, 'GPU des not support!!'
-    
     total_gpus, args.local_rank = init_dist_pytorch(args.local_rank, backend='nccl')
     if args.reproducibility:
         set_seed(seed_value=7777)
