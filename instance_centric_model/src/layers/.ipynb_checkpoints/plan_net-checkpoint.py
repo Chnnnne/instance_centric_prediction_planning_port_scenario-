@@ -12,6 +12,7 @@ class PlanNet(nn.Module):
             nn.ReLU(inplace=True), 
             nn.Linear(64, 1), 
             nn.Sigmoid())
+        self.dropout =  nn.Dropout(0.3)
 
     def forward(self, agent_feats, plan_traj, plan_traj_mask):
         """
@@ -26,7 +27,7 @@ class PlanNet(nn.Module):
         if plan_traj.dim() == 3:
             plan_traj = plan_traj.unsqueeze(1)
             plan_traj_mask = plan_traj_mask.unsqueeze(1)
-        plan_feat = self.plan_mlp(plan_traj, plan_traj_mask).expand(-1, agent_num, -1) # B*N*D
+        plan_feat = self.dropout(self.plan_mlp(plan_traj, plan_traj_mask)) # B*N*D
         plan_feat = torch.einsum('bnd,bn->bnd', plan_feat, gate)
         agent_feats = agent_feats + plan_feat
         return agent_feats, gate
