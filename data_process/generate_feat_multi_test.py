@@ -54,6 +54,8 @@ def parse_log_data(log_data):
                 x = agent.connect_x
                 y = agent.connect_y
                 vel = agent.head_vel
+                if not agent.HasField("head_vel_yaw"):
+                    return None
                 vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
@@ -63,6 +65,8 @@ def parse_log_data(log_data):
                 offset = agent.length * kDefaultCenterOffsetRatio 
                 x = agent.x + offset * math.cos(agent.yaw)
                 y = agent.y + offset * math.sin(agent.yaw)
+                if not agent.HasField("head_vel_yaw"):
+                    return None
                 vel = agent.head_vel
                 vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
@@ -73,6 +77,8 @@ def parse_log_data(log_data):
                 x = agent.x - offset*math.cos(agent.yaw)
                 y = agent.y - offset*math.sin(agent.yaw)
                 vel = agent.vel
+                if not agent.HasField("vel_yaw"):
+                    return None
                 vel_yaw = agent.vel_yaw
                 pos_yaw = agent.yaw
                 length = agent.length
@@ -317,8 +323,8 @@ def get_lane_infos(lanes, center_point, center_heading, distance=10, radius=100,
         polyline = np.asarray(polyline)
         lane_ctr = np.mean(polyline[:, 0:2], axis=0)
         lane_vec = [np.cos(lane_heading), np.sin(lane_heading)]
+        polyline_dir = get_polyline_dir(polyline[:, 0:2].copy())
         polyline = transform_to_local_coords(polyline, lane_ctr, lane_heading)
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
         polyline = np.concatenate((polyline[:, 0:2], polyline_dir, polyline[:, 2:]), axis=-1)
    
         valid_num, point_dim =  min(num_points_each_polyline, polyline.shape[0]), polyline.shape[-1]
@@ -368,10 +374,8 @@ def get_junction_infos(junctions, distance=5.0, num_points_each_polyline=20):
         polyline = np.asarray(polyline)
         junction_ctr = np.mean(polyline[:, 0:2], axis=0)
         junction_vec = [np.cos(math.pi/2), np.sin(math.pi/2)]
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
+        polyline_dir = get_polyline_dir(polyline[:, 0:2].copy())
         polyline = transform_to_local_coords(polyline, junction_ctr, math.pi/2)
-        
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
         polyline = np.concatenate((polyline[:, 0:2], polyline_dir, polyline[:, 2:]), axis=-1)
 
         valid_num, point_dim = min(num_points_each_polyline, polyline.shape[0]), polyline.shape[-1]
@@ -464,6 +468,8 @@ def load_seq_save_features(index):
     if judge_undefined_scene(cur_x, cur_y) or judge_undefined_scene(last_x, last_y):
         return
     data_info = parse_log_data(log_data)
+    if data_info is None:
+        return
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
@@ -549,12 +555,12 @@ if __name__=="__main__":
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = test_files
-    cur_output_path = '/private2/wanggang/instance_model_data/test'
+    cur_output_path = '/private2/wanggang/instance_centric_data/test'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    pool = multiprocessing.Pool(processes=4)
+    pool = multiprocessing.Pool(processes=8)
     pool.map(load_seq_save_features, range(len(cur_files)))
     print("###########完成###############")
     pool.close()

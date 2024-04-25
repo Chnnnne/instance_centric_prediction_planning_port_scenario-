@@ -13,37 +13,13 @@ import multiprocessing
 from map_point_seacher import MapPointSeacher
 from modules.hdmap_lib.python.binding.libhdmap import HDMapManager, Vec2d
 
-def get_ego_box_info(x, y, yaw, trailer_angle):
-    # howo固定参数
-    front_length = 5.395
-    length = 6.855
-    width = 2.996
-    base_offset = 1.9765
-    head_x = x + base_offset * math.cos(yaw)
-    head_y = y + base_offset * math.sin(yaw)
-    head_box_info =(head_x, head_y, yaw, length, width)
-    
-    ego_to_coupling_point = 0.033
-    trailer_length = 12.715
-    trailer_width = 2.780
-    trailer_couple_to_center = 5.593
-    
-    couple_x = x + ego_to_coupling_point * math.cos(yaw)
-    couple_y = y + ego_to_coupling_point * math.sin(yaw)
-    trailer_yaw = yaw + trailer_angle
-    trailer_x = couple_x - trailer_couple_to_center * math.cos(trailer_yaw)
-    trailer_y = couple_y - trailer_couple_to_center * math.sin(trailer_yaw)
-    trailer_box_info =(trailer_x, trailer_y, trailer_yaw, trailer_length, trailer_width)
-    return head_box_info, trailer_box_info
+def judge_undefined_scene(x, y):
+    a = -(80.0/77)
+    b = 3715155.25974
+    ans = y - a*x - b
+    return True if ans <= 0 else False
 
-def get_agent_box_info(agent):
-    trailer_box_info = (agent.x, agent.y, agent.yaw, agent.length, agent.width)
-    if agent.HasField('head_x'):
-        head_box_info = (agent.head_x, agent.head_y, agent.head_yaw, agent.head_length, agent.head_width)
-    else:
-        head_box_info = None
-    return head_box_info, trailer_box_info
-
+    
 def parse_log_data(log_data):
     data_info = {}
     ego_id = -1
@@ -54,8 +30,7 @@ def parse_log_data(log_data):
         cur_t = cur_frame.timestamp
         # 自车信息
         if ego_id not in data_info:
-            data_info[ego_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 
-                                 'type':[], 'head_box_info':[], 'trailer_box_info':[]}
+            data_info[ego_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[]}
         data_info[ego_id]['t'].append(cur_t)
         data_info[ego_id]['x'].append(cur_frame.vehicle_state_debug.xy.x)
         data_info[ego_id]['y'].append(cur_frame.vehicle_state_debug.xy.y)
@@ -64,23 +39,23 @@ def parse_log_data(log_data):
         data_info[ego_id]['length'].append(6.855)
         data_info[ego_id]['width'].append(2.996)
         data_info[ego_id]['type'].append(-1)
-        trailer_angle = cur_frame.vehicle_state_debug.trailer_angle
-        head_box_info, trailer_box_info = get_ego_box_info( data_info[ego_id]['x'][-1], data_info[ego_id]['y'][-1], data_info[ego_id]['vel_yaw'][-1], trailer_angle)
-        data_info[ego_id]['head_box_info'].append(head_box_info)
-        data_info[ego_id]['trailer_box_info'].append(trailer_box_info)
-         
         # 障碍物信息
         for agent in cur_frame.agent_map_debug.agents:
+            # planning 内部agent_type编码方式
+            # HUMAN = 0, CONTAINER_TRUCK = 1, TRUCK = 2, CAR = 3, BUS = 4, BICYCLE = 5, TRICYCLE = 6, CRANE = 7, GANTRY = 8,
+            # BLOCK = 9, RAILING = 10, STACKER = 11, UNKNOWN = 12, GRID = 13, CHARGER = 14
+            # container_truck和truck区分开
             if agent.agent_type not in [0, 1, 2, 3, 4, 11]:
                 continue
             agent_id = agent.agent_id.id
             if agent_id not in data_info:
-                data_info[agent_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 
-                                       'type':[], 'head_box_info':[], 'trailer_box_info':[]}
+                data_info[agent_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[]}
             if agent.HasField("connect_x"):
                 x = agent.connect_x
                 y = agent.connect_y
                 vel = agent.head_vel
+                if not agent.HasField("head_vel_yaw"):
+                    return None
                 vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
@@ -90,6 +65,8 @@ def parse_log_data(log_data):
                 offset = agent.length * kDefaultCenterOffsetRatio 
                 x = agent.x + offset * math.cos(agent.yaw)
                 y = agent.y + offset * math.sin(agent.yaw)
+                if not agent.HasField("head_vel_yaw"):
+                    return None
                 vel = agent.head_vel
                 vel_yaw = agent.head_vel_yaw
                 pos_yaw = agent.head_yaw
@@ -100,6 +77,8 @@ def parse_log_data(log_data):
                 x = agent.x - offset*math.cos(agent.yaw)
                 y = agent.y - offset*math.sin(agent.yaw)
                 vel = agent.vel
+                if not agent.HasField("vel_yaw"):
+                    return None
                 vel_yaw = agent.vel_yaw
                 pos_yaw = agent.yaw
                 length = agent.length
@@ -113,143 +92,9 @@ def parse_log_data(log_data):
             data_info[agent_id]['vel_yaw'].append(vel_yaw)
             data_info[agent_id]['length'].append(length)
             data_info[agent_id]['width'].append(width)
-            agent_type = agent.agent_type
-            if agent_type == 2:
-                agent_type = 1     
+            agent_type = agent.agent_type  
             data_info[agent_id]['type'].append(agent_type)
-            head_box_info, trailer_box_info = get_agent_box_info(agent)
-            data_info[agent_id]['head_box_info'].append(head_box_info)
-            data_info[agent_id]['trailer_box_info'].append(trailer_box_info)
     return data_info
-
-def construct_box_info(data_info, agent_id):
-    agent_boxs = {}
-    for i in range(len(data_info[agent_id]['t'])):
-        timestamp = data_info[agent_id]['t'][i]
-        head_box_info = data_info[agent_id]['head_box_info'][i]
-        if head_box_info is None:
-            head_box = None
-        else:
-            head_box = Box2d(Vec2d(head_box_info[0], head_box_info[1]), head_box_info[2], head_box_info[3], head_box_info[4])
-        trailer_box_info = data_info[agent_id]['trailer_box_info'][i]
-        if trailer_box_info is None:
-            trailer_box = None
-        else:
-            trailer_box = Box2d(Vec2d(trailer_box_info[0], trailer_box_info[1]), trailer_box_info[2], trailer_box_info[3], trailer_box_info[4])
-        agent_boxs[timestamp] = (head_box, trailer_box)
-    return agent_boxs
-
-def check_overlap(ego_boxs, agent_boxs, cur_t):
-    has_overlap = False
-    for agent_key, agent_value in agent_boxs.items():
-        if agent_key < cur_t:
-            continue
-        agent_head_box, agent_trailer_box = agent_value[0], agent_value[1]
-        for ego_key, ego_value in ego_boxs.items():
-            if ego_key < cur_t:
-                continue
-            ego_head_box, ego_trailer_box = ego_value[0], ego_value[1]
-            if agent_head_box is not None:
-                if agent_head_box.HasOverlap(ego_head_box):
-                    has_overlap = True
-                    break
-                if agent_head_box.HasOverlap(ego_trailer_box):
-                    has_overlap = True
-                    break
-            if agent_trailer_box is not None:
-                if agent_trailer_box.HasOverlap(ego_head_box):
-                    has_overlap = True
-                    break
-                if agent_trailer_box.HasOverlap(ego_trailer_box):
-                    has_overlap = True
-                    break
-        if has_overlap:
-            break
-    return has_overlap
-                
-def get_inter_pos(agent_info, inter_timestamp):
-    inter_x, inter_y = -1, -1
-    for i in range(len(agent_info['t'])):
-        if agent_info['t'][i] >= inter_timestamp:
-            inter_x = agent_info['x'][i]
-            inter_y = agent_info['y'][i]
-            break
-    return inter_x, inter_y
-        
-def get_inter_info(data_info, inter_data):
-    inter_info = {}
-    # 建立box信息
-    ego_boxs = construct_box_info(data_info, -1)
-    for i in range(len(inter_data)):
-        inter_case = inter_data[i]
-        influencer = inter_case['influencer']
-        reactor = inter_case['reactor']
-        inter_timestamp = inter_case['timestamp']
-             
-        is_yield = False
-        if influencer >= 0:
-            agent_id = influencer
-            is_yield = False
-        else:
-            agent_id = reactor
-            is_yield = True
-        if agent_id not in data_info:
-            continue
-        inter_x, inter_y = get_inter_pos(data_info[agent_id], inter_timestamp)
-        if inter_x < 0:
-            continue
-        agent_boxs = construct_box_info(data_info, agent_id) 
-        has_overlap = True
-        for j in range(0, len(data_info[agent_id]['t'])):
-            cur_x, cur_y = data_info[agent_id]['x'][j], data_info[agent_id]['y'][j]
-            cur_t = data_info[agent_id]['t'][j]
-            diff_dist = math.hypot(cur_x - inter_x, cur_y - inter_y)
-            diff_t = cur_t - inter_timestamp
-            ego_head_box, ego_trailer_box = ego_boxs[cur_t]
-            ego_center = ego_head_box.center()
-            ego_x, ego_y = ego_center.x(), ego_center.y()
-            relative_dist = math.hypot(cur_x - ego_x, cur_y - ego_y)
-            
-            if diff_t < -10 or diff_dist > 40:
-                continue
-            if relative_dist > 80:
-                continue
-                
-                
-            if diff_t > 5 or (diff_t > 0 and diff_dist > 30.0):
-                break
-            if diff_t > 0 and diff_dist > 30.0:
-                break
-            
-            label = 2
-            if diff_t <= 0:
-                if is_yield:
-                    label = 1
-                else:
-                    label = 0
-            else:
-                if has_overlap:
-                    if check_overlap(ego_boxs, agent_boxs, cur_t):
-                        if is_yield:
-                            label = 1
-                        else:
-                            label = 0
-                    else:
-                        has_overlap = False
-                        label = 2
-                else:
-                    label = 2
-            if cur_t in inter_info:
-                inter_info[cur_t].append((agent_id, label))
-            else:
-                inter_info[cur_t] = [(agent_id, label)]
-    return inter_info
-
-def judge_undefined_scene(x, y):
-    a = -(80.0/77)
-    b = 3715155.25974
-    ans = y - a*x - b
-    return True if ans <= 0 else False
 
 def normalize_angle(angle):
     PI = math.pi
@@ -478,8 +323,8 @@ def get_lane_infos(lanes, center_point, center_heading, distance=10, radius=100,
         polyline = np.asarray(polyline)
         lane_ctr = np.mean(polyline[:, 0:2], axis=0)
         lane_vec = [np.cos(lane_heading), np.sin(lane_heading)]
+        polyline_dir = get_polyline_dir(polyline[:, 0:2].copy())
         polyline = transform_to_local_coords(polyline, lane_ctr, lane_heading)
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
         polyline = np.concatenate((polyline[:, 0:2], polyline_dir, polyline[:, 2:]), axis=-1)
    
         valid_num, point_dim =  min(num_points_each_polyline, polyline.shape[0]), polyline.shape[-1]
@@ -529,10 +374,8 @@ def get_junction_infos(junctions, distance=5.0, num_points_each_polyline=20):
         polyline = np.asarray(polyline)
         junction_ctr = np.mean(polyline[:, 0:2], axis=0)
         junction_vec = [np.cos(math.pi/2), np.sin(math.pi/2)]
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
+        polyline_dir = get_polyline_dir(polyline[:, 0:2].copy())
         polyline = transform_to_local_coords(polyline, junction_ctr, math.pi/2)
-        
-        polyline_dir = get_polyline_dir(polyline[:, 0:2])
         polyline = np.concatenate((polyline[:, 0:2], polyline_dir, polyline[:, 2:]), axis=-1)
 
         valid_num, point_dim = min(num_points_each_polyline, polyline.shape[0]), polyline.shape[-1]
@@ -625,51 +468,37 @@ def load_seq_save_features(index):
     if judge_undefined_scene(cur_x, cur_y) or judge_undefined_scene(last_x, last_y):
         return
     data_info = parse_log_data(log_data)
+    if data_info is None:
+        return
     ego_info = data_info[-1]
-    inter_info = get_inter_info(data_info, data['inter_info'])
+    frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    # 采样间隔为1s
-    interval = 10
-    items = list(inter_info.items())  # 获取字典的键值对列表
-    sliced_items = items[::interval]  # 按照指定的间隔切片键值对列表
-    for cur_t, inter_list in sliced_items:
+    for i in range(19, frame_num-50, 10):
+        cur_t = ego_info['t'][i]
         # 获取当前帧周围的障碍物和需要预测的障碍物id
         surr_ids, target_ids = get_agent_ids(data_info, cur_t)
         if len(target_ids) == 0:
             continue
-        inter_labels = [2]*(1+len(target_ids) + len(surr_ids))
-        has_inter_info = False
-        for i in range(len(target_ids)):
-            target_id = target_ids[i][0]
-            for inter_id, inter_label in inter_list:
-                if target_id == inter_id:
-                    has_inter_info = True
-                    inter_labels[i+1] = inter_label
-        if not has_inter_info:
-            continue
-        inter_labels = np.asarray(inter_labels)
+
         # 计算目标障碍物的目标点等特征
         tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
         if tar_candidate is None:
             continue
-        ego_index = get_valid_index(ego_info, cur_t)
-        if ego_index < 0:
-            continue
         # 计算障碍物的历史特征
-        agent_ids = [(-1, ego_index)]
+        agent_ids = [(-1, i)]
         agent_ids.extend(target_ids)
         agent_ids.extend(surr_ids)
         agent_feats, agent_masks = generate_his_feats(data_info, agent_ids)
         agent_ctrs, agent_vecs = [], []
-        for agent_id, agent_index in agent_ids:
-            agent_ctrs.append([data_info[agent_id]['x'][agent_index], data_info[agent_id]['y'][agent_index]])
-            theta = data_info[agent_id]['vel_yaw'][agent_index]
+        for agent_id, index in agent_ids:
+            agent_ctrs.append([data_info[agent_id]['x'][index], data_info[agent_id]['y'][index]])
+            theta = data_info[agent_id]['vel_yaw'][index]
             agent_vecs.append([np.cos(theta), np.sin(theta)])
         agent_ctrs = np.asarray(agent_ctrs)
         agent_vecs = np.asarray(agent_vecs)
 
         # 计算plan特征
-        plan_feat, plan_mask = generate_plan_feats(data_info, target_ids, ego_index)
+        plan_feat, plan_mask = generate_plan_feats(data_info, target_ids, i)
 
         # pad
         num = agent_feats.shape[0]
@@ -682,7 +511,7 @@ def load_seq_save_features(index):
         pad_plan_mask = pad_array(plan_mask, (num, plan_mask.shape[1])) # N, 50
 
         # 计算地图特征
-        map_feats, map_mask, map_ctrs, map_vecs = generate_map_feats(ego_info, ego_index, radius=80)
+        map_feats, map_mask, map_ctrs, map_vecs = generate_map_feats(data_info[-1], i, radius=80)
         if map_feats is None:
             continue
 
@@ -709,7 +538,6 @@ def load_seq_save_features(index):
         feat_data['map_mask'] = map_mask.astype(np.int32)
         feat_data['rpe'] = rpe.astype(np.float32)
         feat_data['rpe_mask'] = rpe_mask.astype(np.int32)
-        feat_data['inter_labels'] = inter_labels.astype(np.int32)
         save_path = str(cur_output_path) + f'/{vehicle_name}_{cur_t}.pkl'
         with open(save_path, 'wb') as f:
             pickle.dump(feat_data, f)
@@ -727,12 +555,12 @@ if __name__=="__main__":
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = train_files
-    cur_output_path = '/private2/wanggang/instance_model_data/train'
+    cur_output_path = '/private2/wanggang/instance_centric_data/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    pool = multiprocessing.Pool(processes=8)
+    pool = multiprocessing.Pool(processes=16)
     pool.map(load_seq_save_features, range(len(cur_files)))
     print("###########完成###############")
     pool.close()
