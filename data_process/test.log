@@ -2,14 +2,14 @@ nohup: ignoring input
 Logger NOT initialized!
 Log messages are sent to stderr.
 
-[31mE0425 11:08:22.965048 file.h:89] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
-[31mE0425 11:08:22.965074 file.h:140] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
-[31mE0425 11:08:22.965085 yard_bay_manager.cc:111] Failed to get yard bay config from config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:25:45.112488 file.h:89] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:25:45.112501 file.h:140] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:25:45.112511 yard_bay_manager.cc:111] Failed to get yard bay config from config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
 ###########完成###############
-0425 15:35:14.606682
+0425 20:37:14.354509
 
 ***** FATAL SIGNAL RECEIVED ******* 
-Received fatal signal: SIGSEGV(11)	PID: 591
+Received fatal signal: SIGSEGV(11)	PID: 244
 
 ***** SIGNAL SIGSEGV(11)
 
@@ -36,7 +36,7 @@ Exiting after fatal event  (FATAL_SIGNAL). Fatal type:  SIGSEGV
 Log content flushed sucessfully to sink
 
 
-[31mF0425 15:35:14.606682 :0] Received fatal signal: SIGSEGV(11)	PID: 591
+[31mF0425 20:37:14.354509 :0] Received fatal signal: SIGSEGV(11)	PID: 244
 
 ***** SIGNAL SIGSEGV(11)
 

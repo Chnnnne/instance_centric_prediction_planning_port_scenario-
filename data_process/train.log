@@ -2,6 +2,68 @@ nohup: ignoring input
 Logger NOT initialized!
 Log messages are sent to stderr.
 
-[31mE0425 11:08:11.612419 file.h:89] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
-[31mE0425 11:08:11.612438 file.h:140] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
-[31mE0425 11:08:11.612447 yard_bay_manager.cc:111] Failed to get yard bay config from config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:24:46.137562 file.h:89] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:24:46.137577 file.h:140] Failed to open file config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+[31mE0425 17:24:46.137583 yard_bay_manager.cc:111] Failed to get yard bay config from config/modules/hdmap_lib/conf/port_meishan/yard_bay_config.pb.txt[m
+###########完成###############
+0426 00:55:14.855504
+
+***** FATAL SIGNAL RECEIVED ******* 
+Received fatal signal: SIGSEGV(11)	PID: 164
+
+***** SIGNAL SIGSEGV(11)
+
+*******	STACKDUMP *******
+	stack dump [1] (anonymous namespace)::signalHandler(int, siginfo_t*, void*)
+	stack dump [2] __restore_rt
+	stack dump [3] get_cie_encoding
+	stack dump [4] classify_object_over_fdes
+	stack dump [5] search_object
+	stack dump [6] _Unwind_Find_FDE
+	stack dump [7] uw_frame_state_for
+	stack dump [8] uw_init_context_1
+	stack dump [9] _Unwind_ForcedUnwind
+	stack dump [10] __pthread_unwind
+	stack dump [11] pthread_exit
+	stack dump [12] PyThread_exit_thread
+	stack dump [13] t_bootstrap
+	stack dump [14] pythread_wrapper
+	stack dump [15] start_thread
+	stack dump [16] clone
+	stack dump [17] 
+
+Exiting after fatal event  (FATAL_SIGNAL). Fatal type:  SIGSEGV
+Log content flushed sucessfully to sink
+
+
+[31mF0426 00:55:14.855504 :0] Received fatal signal: SIGSEGV(11)	PID: 164
+
+***** SIGNAL SIGSEGV(11)
+
+*******	STACKDUMP *******
+	stack dump [1] (anonymous namespace)::signalHandler(int, siginfo_t*, void*)
+	stack dump [2] __restore_rt
+	stack dump [3] get_cie_encoding
+	stack dump [4] classify_object_over_fdes
+	stack dump [5] search_object
+	stack dump [6] _Unwind_Find_FDE
+	stack dump [7] uw_frame_state_for
+	stack dump [8] uw_init_context_1
+	stack dump [9] _Unwind_ForcedUnwind
+	stack dump [10] __pthread_unwind
+	stack dump [11] pthread_exit
+	stack dump [12] PyThread_exit_thread
+	stack dump [13] t_bootstrap
+	stack dump [14] pythread_wrapper
+	stack dump [15] start_thread
+	stack dump [16] clone
+	stack dump [17] 
+
+Exiting after fatal event  (FATAL_SIGNAL). Fatal type:  SIGSEGV
+Log content flushed sucessfully to sink
+
+[m
+
+
+exitWithDefaultSignalHandler:216. Exiting due to FATAL_SIGNAL, 11   
+

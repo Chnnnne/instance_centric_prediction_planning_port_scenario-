@@ -470,8 +470,6 @@ def load_seq_save_features(index):
     with open(pickle_path, "rb") as f:
         data = pickle.load(f)
     log_data = data['data']
-    cur_x, cur_y = log_data[0].vehicle_state_debug.xy.x, log_data[0].vehicle_state_debug.xy.y
-    last_x, last_y = log_data[-1].vehicle_state_debug.xy.x, log_data[-1].vehicle_state_debug.xy.y
     data_info = parse_log_data(log_data)
     if data_info is None:
         return
@@ -481,7 +479,7 @@ def load_seq_save_features(index):
     for i in range(19, frame_num-50, 10):
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
-        if judge_undefined_scene( ego_info['x'][i],  ego_info['y'][i]):
+        if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
             continue
         
         # 获取当前帧周围的障碍物和需要预测的障碍物id
@@ -563,7 +561,7 @@ if __name__=="__main__":
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = train_files
-    cur_output_path = '/private2/wanggang/instance_centric_data/train'
+    cur_output_path = '/private/wanggang/instance_centric_data/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
