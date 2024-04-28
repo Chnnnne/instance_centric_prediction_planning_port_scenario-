@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 import sys
 sys.path.append("/wg_dev/instance_centric_model/")
-from data_loader import InterDataSet
+from src.data_loader import InterDataSet
 
 dataset_dir = "/private/wanggang/instance_centric_data/"
 set_name = "train"

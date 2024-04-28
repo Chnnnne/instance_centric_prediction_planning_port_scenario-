@@ -1,0 +1,47 @@
+2024-04-28 09:49:48,608   INFO  **********************Start logging**********************
+2024-04-28 09:49:48,609   INFO  --------------------------------------------------------------
+2024-04-28 09:49:48,609   INFO  |                         PARAMETERS                         |
+2024-04-28 09:49:48,609   INFO  --------------------------------------------------------------
+2024-04-28 09:49:48,609   INFO  | model_name               : MODEL
+2024-04-28 09:49:48,609   INFO  | dataset_dir              : /private/wanggang/instance_centric__data/
+2024-04-28 09:49:48,609   INFO  | batch_size               : 32
+2024-04-28 09:49:48,609   INFO  | workers                  : 8
+2024-04-28 09:49:48,609   INFO  | enable_log               : True
+2024-04-28 09:49:48,610   INFO  | device                   : cuda
+2024-04-28 09:49:48,610   INFO  | local_rank               : 0
+2024-04-28 09:49:48,610   INFO  | without_sync_bn          : False
+2024-04-28 09:49:48,610   INFO  | phase                    : train
+2024-04-28 09:49:48,610   INFO  | num_epochs               : 50
+2024-04-28 09:49:48,610   INFO  | load_checkpoint          : None
+2024-04-28 09:49:48,610   INFO  | save_every               : 10
+2024-04-28 09:49:48,610   INFO  | start_validation         : 10
+2024-04-28 09:49:48,610   INFO  | validate_every           : 10
+2024-04-28 09:49:48,611   INFO  | learning_rate            : 0.001
+2024-04-28 09:49:48,611   INFO  | weight_decay             : 0.01
+2024-04-28 09:49:48,611   INFO  | optimizer                : AdamW
+2024-04-28 09:49:48,611   INFO  | scheduler                : ExponentialLR
+2024-04-28 09:49:48,611   INFO  | agent_input_size         : 13
+2024-04-28 09:49:48,611   INFO  | agent_hidden_size        : 64
+2024-04-28 09:49:48,611   INFO  | map_input_size           : 5
+2024-04-28 09:49:48,611   INFO  | map_hidden_size          : 64
+2024-04-28 09:49:48,611   INFO  | d_model                  : 128
+2024-04-28 09:49:48,612   INFO  | rpe_input_size           : 5
+2024-04-28 09:49:48,612   INFO  | rpe_hidden_size          : 64
+2024-04-28 09:49:48,612   INFO  | plan_input_size          : 4
+2024-04-28 09:49:48,612   INFO  | decoder_hidden_size      : 64
+2024-04-28 09:49:48,612   INFO  | bezier_order             : 7
+2024-04-28 09:49:48,612   INFO  | dropout                  : 0.1
+2024-04-28 09:49:48,612   INFO  | m                        : 50
+2024-04-28 09:49:48,612   INFO  | update_edge              : True
+2024-04-28 09:49:48,612   INFO  | init_weights             : True
+2024-04-28 09:49:48,612   INFO  | reproducibility          : True
+2024-04-28 09:49:48,613   INFO  | use_cuda                 : True
+2024-04-28 09:49:48,613   INFO  | base_dir                 : .
+2024-04-28 09:49:48,613   INFO  | save_base_dir            : output
+2024-04-28 09:49:48,613   INFO  | save_dir                 : ./output
+2024-04-28 09:49:48,613   INFO  | model_dir                : ./output/MODEL
+2024-04-28 09:49:48,613   INFO  | log_dir                  : ./output/log
+2024-04-28 09:49:48,613   INFO  | tensorboard_dir          : ./output/tensorboard
+2024-04-28 09:49:48,613   INFO  | config                   : ./output/config_MODEL.yaml
+2024-04-28 09:49:48,613   INFO  --------------------------------------------------------------
+

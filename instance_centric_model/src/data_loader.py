@@ -11,6 +11,10 @@ class InterDataSet(Dataset):
         self.ids = os.listdir(self.data_root)
         random.seed(777)
         random.shuffle(self.ids)
+        if set_name=="train":
+            self.ids = self.ids[:2000000]
+        else:
+            self.ids = self.ids[:10000]
         
     def __len__(self):
         return len(self.ids)
