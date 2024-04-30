@@ -18,7 +18,7 @@ def get_parser():
         '--dataset_dir', '-dd', default=f'/private/wanggang/instance_centric_data/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=32, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=8, type=int, help='number of batch size')
     parser.add_argument(
         '--workers', type=int, default=8, help='number of workers for dataloader')
     parser.add_argument(

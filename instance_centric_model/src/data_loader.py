@@ -107,7 +107,7 @@ def get_ddp_dataloader(args, set_name):
     if args.local_rank == 0:
         print(f"{set_name} dataset contains {len(dataset)} data")
     dataloader = DataLoader(dataset, batch_size=args.batch_size,
-                            pin_memory=True, num_workers=args.workers,
+                            pin_memory=False, num_workers=args.workers,
                             shuffle=False, collate_fn=dataset.collate_batch,
                             drop_last=drop_last, sampler = sampler, timeout=0
                             )

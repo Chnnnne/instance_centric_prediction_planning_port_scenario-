@@ -28,7 +28,19 @@ class Loss(nn.Module):
         cls_loss = F.binary_cross_entropy(pred_probs, gt_probs, reduction='sum')/pred_num
         
         gt_tar_offset = input_dict["gt_tar_offset"].cuda() # B, N ,2
-        gt_tar_offset = gt_tar_offset[pred_mask] # S, 2
+        try:
+            gt_tar_offset = gt_tar_offset[pred_mask] # S, 2
+        except Exception as e:
+            print('产生错误了:',e)
+            print(f"pred_mask.shape: {pred_mask.shape}")
+            print(f"gt_tar_offset: {gt_tar_offset.shape}")
+            print("pred_mask:")
+            print(pred_mask)
+            print(torch.isfinite(gt_tar_offset))
+            print(torch.isnan(gt_tar_offset))
+            print("gt_tar_offset:")
+            print(gt_tar_offset)
+
         gt_idx = gt_probs.nonzero()[:pred_num] 
         pred_offsets = output_dict['pred_offsets'][pred_mask] # S, M, 2
         pred_offsets = pred_offsets[gt_idx[:, 0], gt_idx[:, 1]] # S, 2
