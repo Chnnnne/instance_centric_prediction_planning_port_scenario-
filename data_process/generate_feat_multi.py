@@ -81,9 +81,12 @@ def parse_log_data(log_data):
                     vel_yaw = agent.head_yaw
                 else:
                     vel_yaw = agent.head_vel_yaw
+<<<<<<< HEAD
                 vel = agent.head_vel
                 vel_yaw = agent.head_vel_yaw if agent.HasField('head_vel_yaw') else agent.head_yaw
                 # vel_yaw = agent.head_vel_yaw
+=======
+>>>>>>> bak up
                 pos_yaw = agent.head_yaw
                 length = agent.head_length
                 width = agent.head_width
@@ -193,8 +196,9 @@ def pad_array_list(array_list):
     # 找到最大的维度
     max_dim = max(arr.shape[0] for arr in array_list)
 
-    # 填充数组为相同的维度并合并
-    padded_array_list = [np.concatenate([arr, np.zeros((max_dim - arr.shape[0],) + arr.shape[1:])]) for arr in array_list]
+    # 填充数组为相同的维度并合并# n, Max-N,20, 2
+    padded_array_list = [np.concatenate([arr, np.zeros((max_dim - arr.shape[0],) + arr.shape[1:])]) 
+                         for arr in array_list]
     merged_array = np.stack(padded_array_list) # N, Max_dim(Max point num), 2
     return merged_array
 
@@ -259,15 +263,16 @@ def generate_future_feats(data_info: dict, target_ids: list):
 
 def generate_future_feats_path(data_info: dict, target_ids: list):
     '''
-    path_candidate, gt_preds, gt_candts, candidate_mask
-        - tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2    n是target agent的个数， N（不定）是每个target的采样点的数量   Max-N是所有target agent分别采样点的数量的最大值
-        - gt_preds = np.stack(gt_preds) # n, 50, 2
-        - gt_tar_offset = np.stack(gt_tar_offset) # n, 2
-        - gt_candts = pad_array_list(gt_candts) # n,Max-N
-        - candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
+        n是target agent的个数， N是每个agent采样的refpath个数， Max-N是所有agent最大的refpath个数
+        all_candidate_refpaths_cords:   n , Max-N, 20*2       
+        all_candidate_refpaths_vecs:    n , Max-N, 20*2     
+        gt_preds:       n, 50, 2
+        gt_cands:       n, Max-N, 
+        candidate_mask:      n, Max-N
+
     '''
     n = len(target_ids)
-    path_candidate, gt_preds, gt_candts, candidate_mask = [], [], [], []
+    all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, all_gt_candts, all_candidate_mask = [], [], [], []
     valid_flag = False
     for i in range(n):
         target_id, cur_index = target_ids[i]
@@ -282,44 +287,59 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
         ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
-        # candidate_points = mp_seacher.get_candidate_target_points(ori) # △ (N,2)
-        candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
-        if len(candidate_points) == 0:
-            candidate_points = np.zeros((1, 2))
+        # candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
+        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+        if len(candidate_refpaths_cords) == 0:
+            candidate_refpaths_cords = np.zeros((1, 2))
             tar_candts_gt = np.zeros(1)
             tar_offset_gt = np.zeros(2)
             candts_mask = np.zeros((1))
-        else:    # 根据五秒的真实轨迹信息来标注哪一个候选path是gt（后面用于算交叉熵损失loss和基于候选path生成轨迹与真实轨迹对比算loss）
+        else:   
+            gt_idx,_ = mp_seacher.get_candidate_gt_refpath_new(agt_traj_fut_all,candidate_refpaths_cords, kd_trees)
+            candidate_refpaths_cords = np.asarray(candidate_refpaths_cords)# (N, 20, 2)
+            # ！转化坐标系！！！！！！！！！！！！！
+            # candidate_refpaths_cords = transform_to_local_coords(candidate_refpaths_cords,center_xy,center_heading)
+            candidate_refpaths_vecs = np.asarray()# (N, 20, 2)
+            gt_cand = np.zeros(gt_idx,dtye=np.int32) # (N,)
+            gt_cand[-1] = 1
+            candts_mask = np.ones((candidate_refpaths_cords.shape[0])) # (N,)
+
+
+            
+        
+
+
+            '''
             # candidate_points = np.asarray(candidate_points)
             # candidate_points = transform_to_local_coords(candidate_points, center_xy, center_heading)
             # tar_candts_gt, tar_offset_gt = get_candidate_gt(candidate_points, agt_traj_fut[-1, 0:2]) # (N,) (2,)
             
             # transform_refpath_to_local_coords
-            tar_candts_gt = mp_seacher.get_candidate_gt_refpath(agt_traj_fut_all, map_paths, candidate_refpaths_cord)
-            if math.hypot(tar_offset_gt[0], tar_offset_gt[1]) > 2:
-                candidate_points = np.zeros((1, 2))
-                tar_candts_gt = np.zeros(1)#
-                tar_offset_gt = np.zeros(2)
-                candts_mask = np.zeros((1))
-            else:
-                candts_mask = np.ones((candidate_points.shape[0])) # (N, )
-                valid_flag = True
+            # tar_candts_gt = mp_seacher.get_candidate_gt_refpath(agt_traj_fut_all, map_paths, candidate_refpaths_cord)
+            # if math.hypot(tar_offset_gt[0], tar_offset_gt[1]) > 2:
+            #     candidate_points = np.zeros((1, 2))
+            #     tar_candts_gt = np.zeros(1)#
+            #     tar_offset_gt = np.zeros(2)
+            #     candts_mask = np.zeros((1))
+            # else:
+            #     candts_mask = np.ones((candidate_points.shape[0])) # (N, )
+            #     valid_flag = True
+            '''
         
-        tar_candidate.append(candidate_points) # (n, N,2) n是target agent的个数， N（不定）是每个target的采样点的数量
-        gt_preds.append(agt_traj_fut) # (n, 50, 2)
-        gt_candts.append(tar_candts_gt) # (n, N,) 
-        gt_tar_offset.append(tar_offset_gt) # (n, 2,)
-        candidate_mask.append(candts_mask) # (n, N, )
+        all_candidate_refpaths_cords.append(candidate_refpaths_cords) #(n, N, 20, 2)
+        all_candidate_refpaths_vecs.append(candidate_refpaths_vecs)# (n, N, 20, 2)
+        
+        gt_preds.append(agt_traj_fut) # n, 50, 2
+        gt_candts.append(gt_cand) # n, N
+        candidate_mask.append(candts_mask) # n ,N
             
-    if not valid_flag:
-        return None, None, None, None, None
-    else:
-        tar_candidate = pad_array_list(tar_candidate) # n, Max-N, 2   Max-N是所有target agent分别采样点的数量的最大值
-        gt_preds = np.stack(gt_preds) # n, 50, 2
-        gt_tar_offset = np.stack(gt_tar_offset) # n, 2
-        gt_candts = pad_array_list(gt_candts) # n,Max-N
-        candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
-    return tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask
+    
+    all_candidate_refpaths_cords = pad_array_list(all_candidate_refpaths_cords) # n, Max-N,20, 2
+    all_candidate_refpaths_vecs = pad_array_list(all_candidate_refpaths_vecs) # n, Max-N, 20, 2
+    gt_preds = np.stack(gt_preds) # n, 50, 2
+    gt_candts = pad_array_list(gt_candts) # n,Max-N
+    candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
+    return all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, gt_candts, candidate_mask
 
 def generate_his_feats(data_info, agent_ids):
     '''
@@ -577,14 +597,16 @@ def my_candidate_refpath_search_test(index):
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
     for i in range(19, frame_num-50, 10): # 10f间隔遍历ego的所有f obs:2s fut:5s
+        if i <=1609:
+            continue
         cur_t = ego_info['t'][i]
         # 获取当前帧周围的障碍物和需要预测的障碍物id
         surr_ids, target_ids = get_agent_ids(data_info, cur_t)
         if len(target_ids) == 0:
             continue
         n = len(target_ids)
-        # print(,i)
         for t in range(n):
+            print("="*100,"new agent start")
             target_id, cur_index = target_ids[t]
             agent_info = data_info[target_id]
             center_xy = np.array([agent_info['x'][cur_index], agent_info['y'][cur_index]])
@@ -599,13 +621,25 @@ def my_candidate_refpath_search_test(index):
             ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
-            print(agent_info['vel_yaw'])
-            print(agent_info['vel_yaw'][cur_index])
-            print(agent_info['vel'])
-            candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori)
 
-            plot_utils.draw_candidate_refpaths_with_his_fut(ori,candidate_refpaths_cord, agt_traj_his_2s ,agt_traj_fut_all)
-            exit()
+            # candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori)
+            candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+            cand_gt_idx,errors = mp_seacher.get_candidate_gt_refpath_new(agt_traj_fut_all,candidate_refpaths_cords, kd_trees)
+            
+            if cand_gt_idx == -1:
+                print("filter!")
+                print("!!"*100)
+                
+            # return gt_idx
+            # cand_gt_idx,way = mp_seacher.get_candidate_gt_refpath(agt_traj_fut_all, map_paths, candidate_refpaths_cords)
+            # if cand_gt_idx == -1:
+            #     print("filter！")
+            #     cand_gt_idx = None
+                
+            plot_utils.draw_candidate_refpaths_with_his_fut(ori,candidate_refpaths_cords, cand_gt_idx, agt_traj_his_2s ,agt_traj_fut_all, other_info = {"pkl_path":pickle_path, "pkl_index":index, "ego_frame":i, "way": " ","target_id":target_id, "errors":errors})
+            print("="*100,"new agent end")
+            
+
 
 
 def load_seq_save_features(index):
@@ -750,6 +784,9 @@ if __name__=="__main__":
         cur_output_path.mkdir(parents=True)
     print("start")
     for i in range(21,len(cur_files)): # 19 error 21 draw
+        print(i)
         my_candidate_refpath_search_test(i)
+        if i >= 28:
+            break
     print("complete")
     

@@ -9,6 +9,7 @@ from modules.hdmap_lib.python.binding.libhdmap import Vec2d
 import common.math_utils as math_utils
 import common.plot_utils as plot_utils
 import common.map_utils as map_utils
+from scipy.interpolate import interp1d
 
 kSearchJunctionRadius = 2.0
 kJunctionLength = 0.0
@@ -50,7 +51,15 @@ class PathUnit():
             print("junction: ", self.junction.id().value())
         else:
             print("lane: {}, start_s: {}, end_s: {}, is_reverse: {}".format(self.lane.id().value(), self.start_s, self.end_s, self.is_reverse))
-            
+
+def is_subsequence(sub, main):
+    if len(sub) > len(main):
+        return False
+    for i in range(len(main) - len(sub) + 1):
+        if main[i:i+len(sub)] == sub:
+            return True
+    return False
+         
 
 class MapPointSeacher():
     def __init__(self, hdmap, t=5.0, sample_distance=1.0):
@@ -121,6 +130,9 @@ class MapPointSeacher():
             return candidate_points
         return candidate_points
     
+
+
+
     def get_candidate_refpaths(self, ori):
         '''
             根据ori信息，得到refpaths，也即每个agent有若干个refpath，每个refpath由若干个lane seg组成
@@ -143,7 +155,9 @@ class MapPointSeacher():
                 map_path = []
                 searched_length = 0.0
                 self.dfs(start_pathunit, searched_length, map_path, map_paths)
-            candidate_refpaths_cord, candidate_refpaths_vec = self.sample_candidate_refpaths(map_paths, ori)# N条refpath, max lane segments
+            map_paths = self.filter_mappaths(map_paths)
+            refpaths_cord = self.sample_mappaths_for_exact_interval(map_paths)
+            # candidate_refpaths_cord, candidate_refpaths_vec = self.sample_candidate_refpaths(map_paths, ori)# N条refpath, max lane segments
 
         if len(candidate_refpaths_cord) == 0:
             # candidate_refpaths = self.get_candidate_target_points_base_grid(ori)
@@ -157,24 +171,496 @@ class MapPointSeacher():
             # candidate_refpaths = self.get_candidate_refpaths_points_base_grid(ori)
             
         # candidate_refpaths = filter_candidate_refpaths(candidate_refpaths)
-        return candidate_refpaths_cord, candidate_refpaths_vec, map_paths
+        # return candidate_refpaths_cord, candidate_refpaths_vec, map_paths
+        return refpaths_cord, [], map_paths
+
+    def get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(self, ori):
+        '''
+            return 
+            - refpaths_cord  # list[(50,2),(50,2)...]    每个item对应一个mappath
+            - map_paths
+            - refpaths_dis  # list[one_ref_path_dis_list] 每个item对应一个mappath
+            - kdtress 每条候选轨迹对应一个kd-trees方便进行后续计算点到候选的距离
+        '''
+        # ori: [x, y, vel, yaw]
+        search_radius = 2.7
+        self.agent_point = Vec2d(ori[0], ori[1])
+        self.agent_yaw = ori[3]
+        self.length = min(ori[4], 17.0)
+        self.width = min(ori[5], 4)
+        self.agent_front_point = Vec2d(ori[0] + 0.795*self.length*math.cos(self.agent_yaw), ori[1] +  0.795*self.length*math.sin(self.agent_yaw))
+        start_pathunits = []
+        refpaths_cord = []
+        if self.get_start_pathunits(start_pathunits):
+            map_paths = []
+            self.search_range = self.get_search_range_refpath(ori[2])
+            for i in range(len(start_pathunits)):
+                start_pathunit = start_pathunits[i]
+                map_path = []
+                searched_length = 0.0
+                self.dfs(start_pathunit, searched_length, map_path, map_paths)
+                
+            if len(map_paths) == 0:
+                print("len(map_paths) == 0")
+                return [],[],[],[]
+            map_paths = self.filter_mappaths(map_paths)
+            refpaths_cord,  _, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现猜出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
+            # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
+
+            refpaths_cord, kd_trees = self.cluster_refpath(refpaths_cord)
+            # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord)
+            
+
+        
+        if len(refpaths_cord) == 0:
+            print("len(candidate_refpaths_cord) == 0")
+            return [],[],[],[]
+            # filter
+        return refpaths_cord, map_paths, refpaths_dis, kd_trees
+        
+
+
+    def filter_mappaths(self, mappaths):
+        '''
+        mappaths:   list[ [pathunit,pathunit...], [] ]
+        '''
+        def remove_subsequences_and_duplicate(mappaths):
+            def tl2str(tuple_list):
+                return '|'.join(map(str, tuple_list))
+            def is_contiguous_subsequence(small, big):
+                # 转换成字符串进行子串检查
+                small_str = tl2str(small) # 先将list中每个tuple转化为str，然后将这些str用|连接起来
+                big_str =tl2str(big)
+                return small_str in big_str
+            # 先将mappath转化为tuple形式
+            mappaths_tuple = []
+            for mappath in mappaths:
+                mappath_tuple = []
+                for pathunit in mappath:
+                    # junction (id, 1)
+                    # lane (id, 0, reverse:1 / not reverse:0)
+                    if pathunit.is_junction():
+                        mappath_tuple.append((pathunit.junction.id().value(), 1))
+                    else:
+                        mappath_tuple.append((pathunit.lane.id().value(), 0, 1 if pathunit.is_reverse else 0)) 
+                mappaths_tuple.append(mappath_tuple)
+            # 保留不是其他序列连续子序列的序列
+            keep_idx = []
+            eror_idx = []
+
+            seen_mappath_tuple = set()
+            for i, seq1 in enumerate(mappaths_tuple): # seq1 [(),(),()]
+                # 检查是否存在任何其他序列seq2是seq1的父序列
+                if not any(is_contiguous_subsequence(seq1, seq2) and \
+                           len(seq1) < len(seq2) for j, seq2 in enumerate(mappaths_tuple) if i != j)\
+                and tl2str(seq1) not in seen_mappath_tuple:
+                        keep_idx.append(i)
+                        seen_mappath_tuple.add(tl2str(seq1))
+                else:
+                    eror_idx.append(seq1)
+            if len(keep_idx) != len(mappaths):
+                print("mappaths经检测有子序列和重复")
+                # print("eror_idx", eror_idx)
+                # print("keep_idx", keep_idx)
+                # for mappath_tuple in mappaths_tuple:
+                    # print("mappath_tuple", mappath_tuple)
+                # print(mappaths_tuple)
+                # print("mappaths_tuple", len(mappaths_tuple), mappaths_tuple)
+                mappaths = [mappath for idx, mappath in enumerate(mappaths) if idx in keep_idx]
+                # mappaths_tuple = [mappath_tuple for idx, mappath_tuple in enumerate(mappaths_tuple) if idx in keep_idx]
+                # print("mappaths_tuple", len(mappaths_tuple), mappaths_tuple)
+            else:
+                print("mappaths经检测无子序列和重复")
+                # print("mappaths_tuple", mappaths_tuple)
+            return mappaths
+        
+        mappaths = remove_subsequences_and_duplicate(mappaths)
+        return mappaths
+
+    def sample_mappaths_for_exact_interval(self, mappaths, left = 5, right = 50):
+        '''
+            对每条mappath做采样，1m间隔，采到right为止
+        '''
+        refpaths_cord = []
+        refpaths_vec = []
+        refpaths_dis = []
+        for mappath in mappaths:
+            one_refpath_cord = []
+            one_refpath_vec = []
+            one_refpath_dis = []
+            dis_to_sample = right+0.5
+            for idx in range(len(mappath)):
+                cords, vecs, dis_sampled = self.sample_pathunit(mappath, idx, one_refpath_cord,dis_to_sample=dis_to_sample)
+                dis_to_sample -= dis_sampled
+                one_refpath_cord.extend(cords) # (50,2)
+                one_refpath_vec.extend(vecs) # (50,)
+                one_refpath_dis.append(dis_sampled) # (num of pathunit, )
+                if dis_to_sample <= 0.2:
+                    break
+            refpaths_cord.append(one_refpath_cord)# list[(50,2),(50,2)...]
+            refpaths_vec.append(one_refpath_vec) # list[(50),(50)...]
+            refpaths_dis.append(one_refpath_dis) # list[one_ref_path_dis_list]
+
+            
+
+        # print("mappaths",mappaths)
+        # exit()
+        return refpaths_cord, [], refpaths_dis
+
+    def cluster_refpath(self, in_refpaths_cords):
+        '''
+        - in_refpaths_cords: list[(50,2),(50,2)...]
+        - out_refpaths_cords: list[(50,2),(50,2)...]  
+            len(out_refpath_cord) <= len(in_refpath_cord) 
+        - 聚成一类之后，随机取一个作为候选，其余的抛弃
+        '''
+        if len(in_refpaths_cords) == 1:
+            print("only one refpath, no need of cluster")
+            return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])]
+
+        def static_clusetr(cluster):
+            cluster_dict = {}
+            for traj_idx, cluster_idx in enumerate(cluster):
+                if cluster_idx in cluster_dict:
+                    cluster_dict[cluster_idx].append(traj_idx)
+                else:
+                    cluster_dict[cluster_idx] = [traj_idx]
+            return cluster_dict
+        
+        cluster, kd_trees = math_utils.cluster_trajs(in_refpaths_cords)
+        clusetr_dict = static_clusetr(cluster)
+        keep_traj_idx = []
+        for key,val in clusetr_dict.items():
+            keep_traj_idx.append(val[0])
+            if len(val) > 1:
+                print(f"cluster trajs:{val} to {val[0]}'s traj")
+
+        out_refpaths_cord = [in_refpath for idx, in_refpath in  enumerate(in_refpaths_cords) if idx in keep_traj_idx]
+        kd_trees = [kd_tree for idx, kd_tree in  enumerate(kd_trees) if idx in keep_traj_idx]
+
+        print("cluster", cluster)
+        print("len(in_refpaths_cords)", len(in_refpaths_cords))
+        print("len(out_refpaths_cord)", len(out_refpaths_cord))
+        print("len(kd_trees)", len(kd_trees))
+        
+        return out_refpaths_cord, kd_trees
+
+    def get_pathunit_from_point(self, point,output_dir="tmp"):
+        import matplotlib.pyplot as plt
+        fig,ax = plt.subplots(figsize=(12,10))
+        ax.axis('equal')
+        plot_utils.draw_all_lanes_(ax)
+        print([point.x()-80,point.x()+80,point.y()-80, point.y()+80])
+        ax.axis([point.x()-80,point.x()+80,point.y()-80, point.y()+80])
+        ax.scatter(point.x(), point.y(), color="purple")
+
+        junctions = self.hdmap.GetJunctions(point,0) # 一个位置可能获取多个junction或者lane吗？
+        for junction in junctions:
+            if junction.is_virtual_junction():
+                if "vessel_head_and_tail" in junction.attributes().attributes().values():
+                    continue
+            junction_point_x, junction_point_y = [], []
+            junction_points = junction.polygon().points()
+            junction_point_x.extend([point.x() for point in junction_points])
+            junction_point_y.extend([point.y() for point in junction_points])
+            ax.plot(junction_point_x, junction_point_y, ".-b", zorder= 5)
+            
+        lanes = self.hdmap.GetLanes(point,0.1)
+        for lane in lanes:
+            print("lane.IsInJunction()", lane.IsInJunction())
+            print()
+        # plt.show()
+        output_dir = Path(output_dir)
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True)
+            print(f"mkdir {output_dir}")
+        fig_save_path = output_dir / f'point.jpg'
+        fig.savefig(fig_save_path)
+        print(f"draw candiadate_refpath at {fig_save_path.resolve()}")
+        
+            
+                
+
+    def get_units_from_traj(self, traj):
+        # traj [n, 2]
+        units = [] # (id, type) # 0:lane    1:junction
+        count_dict = {}
+
+        traj_vec = traj[1:] - traj[:-1]
+        traj_vec = np.concatenate((traj_vec,traj_vec[-1][np.newaxis,:]), axis = 0)
+        assert traj_vec.shape == traj.shape, "shape of traj vec not equal to traj cord"
+        sample_traj = [Vec2d(xy[0],xy[1]) for xy in traj[::3,:]]
+        sample_vec = [math.atan2(vec[1],vec[0]) for vec in traj_vec[::3,:]]
+        for point, vec in zip(sample_traj,sample_vec):
+            '''
+            逻辑：先判断该点是否位于路口，若在路口中则统计该点的junction信息，判断是否合法和重复之后加入units列表，而不统计lane信息。
+            若该点没有junction信息（也即获取不到junction）则再获取lane，判断是否合法和重复之后加入units列表，再统计一下帧数。
+
+            最终对units中所有lane的帧数判断一下，如果位于非末尾的lane，且属于出路口的lane小于一定值则直接过滤掉
+            '''
+            finish_flag = False
+            junctions = self.hdmap.GetJunctions(point,0) # 一个位置可能获取多个junction或者lane吗？
+            for junction in junctions:
+                if junction.is_virtual_junction():
+                        if "vessel_head_and_tail" in junction.attributes().attributes().values():
+                            continue
+                finish_flag = True # 当前位置在路口则不再进行后续的lane添加
+                cur_unit = (junction.id().value(), 1)
+                if len(units) == 0 or cur_unit != units[-1]:
+                    units.append(cur_unit) 
+                    break
+
+                if cur_unit == units[-1]:
+                    break
+
+                
+
+            if finish_flag:# 选择了junction则不再选择lane
+                continue
+            
+            lanes = self.hdmap.GetRealLanes(point,0)
+            for lane in lanes:
+                if not lane.IsInJunction(): # lane不在交叉口中
+                    if not lane.bi_direction_lane(): # 非双向车道
+                        cur_unit = (lane.id().value(), 0)
+                        if len(units) == 0 or units[-1] != cur_unit:
+                            units.append(cur_unit) 
+                            count_dict[cur_unit] = count_dict.get(cur_unit, 0) + 1
+                            break 
+                    else: # 双向车道
+                        lane_s, _ = lane.GetProjection(point)
+                        lane_heading = lane.GetHeading(lane_s)
+                        diff_angle = self.normalize_angle(vec - lane_heading)
+                        if abs(diff_angle) > math.pi/2:
+                            continue
+                        else: #[0, pi/2]
+                            cur_unit = (lane.id().value(), 0)
+                            if len(units) == 0 or units[-1] != cur_unit:
+                                count_dict[cur_unit] = count_dict.get(cur_unit, 0) + 1
+                                print(count_dict)
+
+                                break
+                            # pathunits = self.set_reverse_and_s(pathunit)
+                            # start_pathunits.extend(pathunits)
+
+        # 对于除了首尾lane 之外的出现过少的lane进行过滤
+        filter_idxs = []
+        for idx, unit in enumerate(units): # 找到最后一个junction
+            if unit[1] == 1 or idx == 0 or idx == len(units) - 1:
+                continue
+            if count_dict[unit] < 10:
+                filter_idxs.append(idx)
+
+        for idx in sorted(filter_idxs, reverse=True):
+            print(f"delete idx {idx}, {units[idx]}")
+            del units[idx]
+            
+        
+        return units
+            
+    def check_duplicate(self, candidate_units):
+        # candidate_units.append(one_mappath_units) # [  [unit,unit,unit], [unit,unit]...   ]
+        return len(candidate_units) != len(set([tuple(one_mappath_units) for one_mappath_units in candidate_units]))
+
+    def check_contain(self, gt_cand):
+        max_len = -1
+        max_idx = -1
+        for idx, (cand_idx,one_mappath_units) in enumerate(gt_cand): # 寻找最大长度的path_units，记录idx
+            if len(one_mappath_units) > max_idx:
+                max_idx = idx
+                max_len = len(one_mappath_units)
+
+            
+        for idx, (cand_idx,one_mappath_units) in enumerate(gt_cand):
+            if idx == max_idx:
+                continue
+            if not is_subsequence(one_mappath_units, gt_cand[max_idx][1]) or len(one_mappath_units) == max_len:
+                return False, None
+        return True, gt_cand[max_idx]
+
+    def get_candidate_gt_refpath_new(self, agt_traj_fut_all, candidate_refpaths_cords, kd_trees):
+        '''
+            - 根据id和cur_index从pkl中读取并转化后的data_info信息(key:id val:info_dictlist)获取一个agent的所有信息agent_info从中读取
+            cur_index之后的所有轨迹信息存入agt_traj_fut_all
+            - agt_traj_fut_all: ndarray [n,2]
+            - candidate_refpaths_cords : list[(50,2),(50,2)...]
+
+        '''
+        def binary_search(distance, l, r, num):
+            while l < r:
+                mid = (l + r) >> 1
+                if distance[mid] >= num:
+                    r = mid
+                else:
+                    l = mid + 1
+            return l
+
+        distances = np.sqrt(np.sum(np.diff(agt_traj_fut_all, axis=0)**2, axis=1))
+        cumulative_distances = np.insert(np.cumsum(distances), 0, 0)  # 在开始插入0，表示从起点开始
+        if cumulative_distances[-1] < 5:
+            print("gt轨迹小于5m，可能为静止，该case直接过滤掉")
+            return -1
+
+        else:
+            if cumulative_distances[-1] >= 50:
+                print("gt轨迹比较长，可以取30m-50m之间的gt轨迹和候选进行度量")
+                # 二分寻找30和50轨迹对应的点idx
+                # end_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 50)
+                # start_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 30)
+                # print("end_idx",cumulative_distances[end_idx])
+                # print("start_idx",cumulative_distances[start_idx])
+                # agt_traj_fut_all_sample = agt_traj_fut_all[start_idx:end_idx + 1]
+                sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=30, end_dis=50, cumulative_distances=cumulative_distances)
+            else:
+                print("gt轨迹在5-50m之间，取真实轨迹的后40%长度的点进行比较")
+                # start_idx = int(len(agt_traj_fut_all) * 0.6)
+                # agt_traj_fut_all_sample = agt_traj_fut_all[start_idx:]
+                sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=cumulative_distances[-1] * 0.6, cumulative_distances=cumulative_distances)
+                
+            agt_traj_fut_all_sample = np.column_stack((sampled_x, sampled_y))
+            # 计算 agt_traj_sample和候选ref逐一计算一个距离， 距离定义：
+            errors = []
+            weights = np.linspace(0.9,1.1,21)
+            for idx, (refpath_cords, weight) in enumerate(zip(candidate_refpaths_cords, weights)):
+                dis = math_utils.calculate_trajectory_sum_projection_distance_use_KDTree(agt_traj_fut_all_sample,refpath_cords,kd_trees[idx])
+                errors.append(dis * weight)
+
+            errors = np.asarray(errors,dtype=np.float32)
+            
+            min2_error_idx = np.argsort(errors)[:2]
+            min_errors = errors[min2_error_idx]
+            print("@"*70)
+            print("errors", errors)
+
+            if (len(errors)==1 and errors[0] < 50) or \
+                (min_errors[0] < 50 and min_errors[1] > 50 and min_errors[1]> min_errors[0]*4/3) or\
+            (min_errors[0]< 50 and min_errors[1] < 50 and min_errors[1]> min_errors[0] * 7/6) or\
+                (min_errors[0]< 20 and min_errors[1] < 20 and min_errors[1]> min_errors[0] * 8/7)or \
+                 (min_errors[0]< 10 and min_errors[1] < 10 and min_errors[1]> min_errors[0] * 11/10):
+                '''
+                1. 只有一条候选，且误差在50以内
+                2. min_error[0] < 50   min_erro[1] > 50    min_error[1] > 4/3*min_error[0]
+                3. min_error[0] < 50   min_error[1] < 50   min_error[1] > 7/6*min_error[0]
+                4. min_eror[0] < 10    min_error[1] < 10   min_error[1] > 11/10*min_error[0]
+                '''
+                print("get the best gt:", min2_error_idx[0])
+                # print("min_dis[1]",min_dis[1])
+                # print("min_dis[0]",min_dis[0])
+                # print("(len(dists)==1 and dists[0] < 50)",(len(dists)==1 and dists[0] < 50))
+                # print("(min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3)", (min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3))
+                # print("(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6)",(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6))
+                return min2_error_idx[0], errors
+            else:
+                # print("min_dis[1]",min_dis[1])
+                # print("min_dis[0]",min_dis[0])
+                # print("can't find the best gt")
+                # print("(min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3)", (min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3))
+                # print("(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6)",(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6))
+                return -1, errors
+            # num = dists[dists < 5]
+            # if num
+            # 足够小，并且没有其他的跟它很相近
+
+            
+
+
+
+            
+        
+
 
     def get_candidate_gt_refpath(self, agt_traj_fut_all, candidate_mappaths, candidate_refpaths_cord):
-        agt_gt_traj_mappath = get_mappath_from_traj(agt_traj_fut_all)
+        '''
+        agt_traj_fut_all  ndarray [n,2]
+        '''
+        origin_agt_fut_x, origin_agt_fut_y = self.sample_points(agt_traj_fut_all)
+        agt_fut_len = self.get_traj_len(agt_traj_fut_all)
+        agt_gt_traj_units = self.get_units_from_traj(agt_traj_fut_all)
+        print(agt_gt_traj_units)
+        # plot_utils.draw_units(agt_gt_traj_units, agt_traj_fut_all)
         gt_cand = []
+        candidate_units = []
         for mappath in candidate_mappaths:
-            if mappath in agt_gt_traj_mappath:
-                gt_cand.append(mappath)
-        if len(gt_cand) == 1:
-            pass # 真实轨迹比较长
-        elif len(gt_cand) > 1:
-            pass # 不存在？
-        elif  len(gt_cand) == 0:
-            if agt_gt_traj_mappath[-1].is_junction():
-                pass # 基于长度路径 等插值采样选出最小的那一个
-            else:
-                pass # 真实轨迹太短了，过滤该case
+            # 一条候选的mappath对应一个one_mappath_units[(id,1),(1d,0)...]
+            one_mappath_units = []
+            for pathunit in mappath:
+                if pathunit.is_junction():
+                    one_mappath_units.append((pathunit.junction.id().value(),1))
+                else:
+                    one_mappath_units.append((pathunit.lane.id().value(),0))
+            candidate_units.append(one_mappath_units) # [  [unit,unit,unit], [unit,unit]...   ]    
+        
+        # 判断agt_gt_traj_units 和 candidate_ref_path对应的unit的包含关系
+        for idx, one_mappath_units in enumerate(candidate_units): # [unit,unit,unit]
+            print(one_mappath_units,"||||",agt_gt_traj_units)
+            if is_subsequence(one_mappath_units,agt_gt_traj_units):
+                gt_cand.append((idx,one_mappath_units))
 
+        
+        if (len(gt_cand) == 0 and agt_gt_traj_units[-1][1] == 1) \
+            or self.check_duplicate(candidate_units): 
+            # 1.若agtfut_end落在了路口里，而ref path end在lane上
+            # 2.ref path 采到的unit有相同的情况， 反向问题.可过滤
+            # 
+            min_error = 1e8
+            min_idx = -1
+            for idx, refpath_cord in enumerate(candidate_refpaths_cord):# 1m间隔 len = 210
+                ref_sampled_x, ref_sampled_y = self.sample_points(refpath_cord)
+                ref_len = self.get_traj_len(refpath_cord)
+                if ref_len > agt_fut_len:
+                    agt_fut_x_extend, agt_fut_y_extend = self.sample_points(agt_traj_fut_all, end_dis=ref_len)
+                    error = np.hypot(ref_sampled_x - agt_fut_x_extend, ref_sampled_y - agt_fut_y_extend).sum()
+                else:
+                    error = np.hypot(ref_sampled_x - origin_agt_fut_x, ref_sampled_y - origin_agt_fut_y).sum()
+                if error < min_error:
+                    min_error = error
+                    min_idx = idx
+            print("way interpo")
+
+            return min_idx, "way interpo"
+        elif len(gt_cand) == 1:
+            print("way best")
+            return gt_cand[0][0], "way best"
+        elif len(gt_cand) > 1:
+            is_contain, max_len_unit = self.check_contain(gt_cand)
+            if is_contain:
+                print("len(gt_cand) > 1, but contain")
+                return max_len_unit[0], "condtain and get max len"
+            print("len(gt_cand) > 1, len gt cand = ", len(gt_cand))
+            print("error?")
+            return -1, "unknow"
+            
+        else:
+            print("way unknow")
+            print("len(gt_cand)",len(gt_cand))
+            return -1, "maybe agt too short"
+
+
+            
+            
+    def sample_points(self, cords, num = 21, start_dis = 0, end_dis = None, cumulative_distances = None):
+        # cords [n,2]
+        if type(cumulative_distances) != np.ndarray and type(cumulative_distances) != list:
+            distances = np.sqrt(np.sum(np.diff(cords, axis=0)**2, axis=1))
+            cumulative_distances = np.insert(np.cumsum(distances), 0, 0)  # 在开始插入0，表示从起点开始
+        # 创建插值函数
+        interp_x = interp1d(cumulative_distances, cords[:, 0], kind='quadratic',fill_value="extrapolate")
+        interp_y = interp1d(cumulative_distances, cords[:, 1], kind='quadratic',fill_value="extrapolate")
+        # 等间隔采样距离
+        if end_dis == None: # 默认采到轨迹结束处
+            sample_points = np.linspace(start_dis, cumulative_distances[-1], num)
+        else:
+            sample_points = np.linspace(start_dis, end_dis, num)
+        # 计算新的x和y坐标
+        sampled_x = np.asarray(interp_x(sample_points),dtype=np.float32)
+        sampled_y = np.asarray(interp_y(sample_points),dtype=np.float32)
+        return sampled_x, sampled_y
+
+
+    def get_traj_len(self, traj):
+        traj = np.asarray(traj)
+        diff = traj[1:] - traj[:-1]
+        return np.hypot(diff[:,0], diff[:,1]).sum()
 
     def sample_candidate_refpaths(self, map_paths, ori):
         '''
@@ -189,6 +675,7 @@ class MapPointSeacher():
             refpath = []
             for idx in range(len(mappath)):
                 refpath.extend(self.sample_pathunit(mappath, idx, refpath, ori))
+
             
             refpath = np.asarray(refpath, np.float64)
             refpath_cord = (refpath[:-1,0:2] + refpath[1:,0:2])/2
@@ -202,13 +689,24 @@ class MapPointSeacher():
         return refpaths_cord,refpaths_vec # list[ num_point,2]
             
 
-        
+    def mappath2units(self, mappath):
+        mappath_tuple = []
+        for pathunit in mappath:
+            # junction (id, 1)
+            # lane (id, 0, reverse:1 / not reverse:0)
+            if pathunit.is_junction():
+                mappath_tuple.append((pathunit.junction.id().value(), 1))
+            else:
+                mappath_tuple.append((pathunit.lane.id().value(), 0, 1 if pathunit.is_reverse else 0)) 
+        return mappath_tuple
 
-    def sample_pathunit(self, mappath, idx, refpath, ori):
+
+    def sample_pathunit(self, mappath, idx, refpath_cord, dis_to_sample, ori = None):
         '''
         return 该pathunit对应的lane segs
         '''
         pathunit = mappath[idx]
+        sampled_dis = 0
         point = Vec2d()
         lane_segs = []
         junctions_dict = {}
@@ -220,7 +718,7 @@ class MapPointSeacher():
             if idx > 0:
                 in_pathunit = mappath[idx - 1]
                 in_pathunit.lane.GetPoint(in_pathunit.end_s, 0.0, point)
-                in_point = refpath[-1] if len(refpath) !=0 else [point.x(),point.y()]
+                in_point = refpath_cord[-1] if len(refpath_cord) !=0 else [point.x(),point.y()]
                 in_heading = in_pathunit.lane.GetHeading(in_pathunit.end_s)
                 if in_pathunit.is_reverse:
                     in_heading += math.pi
@@ -234,10 +732,23 @@ class MapPointSeacher():
                 curve_bez,_ = math_utils.get_bezier_function(in_point, in_heading, out_point, out_heading)
                 # print("add junction point")
                 # print(curve_bez.evaluate_multi(np.linspace(0, 1, 50)).T.shape)
-                split_num = math.ceil(math_utils.get_bezier_curve_length(curve_bez) + 1)
+                bezier_curve_length = math_utils.get_bezier_curve_length(curve_bez)
+                split_num = round(bezier_curve_length + 1)# 1m->2点  1.1m->2点 1.5m->3点
                 junction_points = curve_bez.evaluate_multi(np.linspace(0, 1, split_num)).T
-                junction_points = junction_points[1:-1] if len(junction_points) >= 2 else []
-                lane_segs.extend(junction_points)
+                if len(junction_points) >= 2:
+                    junction_points = junction_points[1:-1]  
+                    sampled_dis = bezier_curve_length*(split_num - 3)/(split_num-1)
+
+                else: 
+                    junction_points = []
+                    sampled_dis = 0
+                
+                if sampled_dis > dis_to_sample:
+                    junction_points = junction_points[:round(dis_to_sample) + 1] 
+                    sampled_dis = dis_to_sample
+
+                lane_segs.extend(junction_points) # [(x,y),(x,y)]
+
             else:
                 print("该mappath没有离开路口的后继lane")
 
@@ -248,27 +759,27 @@ class MapPointSeacher():
                     pathunit.lane.GetPoint(s, 0.0, point)
                     dist = (point - self.agent_point).Length()
                     s -= self.distance
-                    if dist > self.search_range[1]:
-                        continue
-                    elif dist < self.search_range[0]:
-                        continue
-                    if not self.is_valid_candidate_point(point): 
-                        break
+                    # if not self.is_valid_candidate_point(point): 
+                    #     break
                     lane_segs.append([point.x(), point.y()])
+                    sampled_dis += self.distance
+                    if sampled_dis >= dis_to_sample:
+                        break
             else:
                 while s < pathunit.end_s:
                     pathunit.lane.GetPoint(s, 0.0, point)
                     dist = (point - self.agent_point).Length()
                     s += self.distance
-                    if dist > self.search_range[1]:
-                        continue
-                    elif dist < self.search_range[0]:
-                        continue
-                    if not self.is_valid_candidate_point(point): 
-                        continue
+                    # if not self.is_valid_candidate_point(point): 
+                    #     continue
                     lane_segs.append([point.x(), point.y()])
+                    sampled_dis += self.distance
+                    if sampled_dis >= dis_to_sample:
+                        break
+                        
 
-        return lane_segs
+
+        return lane_segs, [], sampled_dis
 
     def sample_candidate_points_v2(self, map_paths, grid_candidate_points):
         point = Vec2d()
@@ -329,7 +840,7 @@ class MapPointSeacher():
         - 前提：用ori作为搜索条件。 
         - 返回：结果存储在start_pathunits，并完善每个pathunit的reverse信息和start_s信息（junction pathunit无需完善）
         - 逻辑：
-            - 以车头前侧位置作为起始搜索点
+            - 以车头前侧位置作为起始搜索点 0.1m搜索半径
                 - 先搜索Junction，只要是非船头船尾的虚拟路口都加入start_pathunits
                 - 再搜索lane
                     - 如果不在路口里且非双向车道，直接进一般set_reverse_s逻辑(根据agent和车道的相对角度信息，得到pathunits并设置start_s和reverse并加入start_pathunits)
@@ -428,13 +939,13 @@ class MapPointSeacher():
     def get_search_range(self, vel):
         a = 2 #m/s^2
         min_search_length = max(vel*self.t - 25.0, 1.0)
-        max_search_length = max(vel*self.t + 25.0, min_search_length)
+        max_search_length = max(vel*self.t + 40.0, min_search_length)
         max_search_length = min(max_search_length, 80)
         return [min_search_length, max_search_length]
     
     def get_search_range_refpath(self, vel):
         min_search_length = max(vel/10, 0.2)
-        max_search_length = vel*self.t + 25.0
+        max_search_length = vel*self.t + 40.0
         return [min_search_length, max_search_length]
     
     def set_reverse_and_s(self, pathunit):
@@ -1092,17 +1603,37 @@ class MapPointSeacher():
 if __name__=='__main__':
 
     # ori = [404645.198, 3295265.55, 6.0, 0.90, 20, 5] # 已经进入路口
-    # ori = [404635.198, 3295255.55, 6.0, 0.95, 20, 5] # 路口前
-    ori = [404635.198, 3295255.55, 12.0, 0.95, 20, 5] # 路口前
+    # ori = [404670.198, 3295290.55, 12.0, 0.95, 20, 5] #进入路口
+    # ori = [404665.198, 3295285.55, 12.0, 0.95, 20, 5] #进入路口
+    # ori = [404642.198, 3295262.55, 12.0, 0.95, 20, 5] # 路口前11m
+    # ori = [404640.198, 3295260.55, 12.0, 0.95, 20, 5] # 路口前14m
+    # ori = [404635.198, 3295255.55, 12.0, 0.95, 20, 5] # 路口前21m
+    # ori = [404633.198, 3295253.55, 12.0, 0.95, 20, 5] # 路口前24m的位置
+    # ori = [404630.198, 3295250.55, 12.0, 0.95, 20, 5] # 路口前28m的位置
+    # ori = [404625.198, 3295245.55, 12.0, 0.95, 20, 5] # 路口前35m的位置
+    # ori = [404622.198, 3295242.55, 12.0, 0.95, 20, 5] # 路口前40m的位置  
+    # ori = [404620.198, 3295240.55, 12.0, 0.95, 20, 5] # 路口前42m的位置  
+    # ori = [404618.198, 3295238.55, 12.0, 0.95, 20, 5] # 路口前45m的位置  
+    # ori = [404616.198, 3295236.55, 12.0, 0.95, 20, 5] # 路口前48m的位置  3类
+    # ori = [404615.198, 3295235.55, 12.0, 0.95, 20, 5] # 路口前50m的位置
+    # ori = [404610.198, 3295230.55, 12.0, 0.95, 20, 5] # 路口前50m以外更远的位置
+    ori = [404600.198, 3295220.55, 12.0, 0.95, 20, 5] # 路口前50m以外更远的位置
     # ori = [404755.198, 3295375.55, 6.0, 0.90, 20, 5] # 普通直行直行
     hdmap = map_utils.get_hdmap()
     map_point_seacher = MapPointSeacher(hdmap)
-    candidate_points = map_point_seacher.get_candidate_target_points(ori)
-    candidate_refpaths, _, mappaths = map_point_seacher.get_candidate_refpaths(ori)
-    
-    plot_utils.draw_candidate_refpaths(ori, candidate_refpaths = candidate_refpaths)
-    # plot_utils.draw_candidate_refpaths_multi(ori, candidate_refpaths = candidate_refpaths)
-    plot_utils.draw_mappaths(ori, mappaths)
 
-    print(f"总共有{len(candidate_points)}个候选点")
-    plot_utils.draw_candidate_points(ori, candidate_points=candidate_points)
+    # ori = [404650.198, 3295270.55, 12.0, 0.95, 20, 5] # 刚好进路口
+    # ori = [404649.198, 3295269.55, 12.0, 0.95, 20, 5] # 刚好没进路口
+
+    # map_point_seacher.get_pathunit_from_point(Vec2d(ori[0], ori[1]))
+
+
+    # candidate_points = map_point_seacher.get_candidate_target_points(ori)
+    # candidate_refpaths, _, mappaths = map_point_seacher.get_candidate_refpaths(ori)
+    refpaths_cord, mappaths, refpaths_dis, kd_trees = map_point_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+    # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
+    # # plot_utils.draw_candidate_refpaths_multi(ori, candidate_refpaths = candidate_refpaths)
+    # plot_utils.draw_mappaths(ori, mappaths)
+
+    # print(f"总共有{len(candidate_points)}个候选点")
+    # plot_utils.draw_candidate_points(ori, candidate_points=candidate_points)

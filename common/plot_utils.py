@@ -1,12 +1,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from modules.hdmap_lib.python.binding.libhdmap import HDMapManager
+from modules.hdmap_lib.python.binding.libhdmap import IdInfo,Vec2d
 import common.plot_config as plot_config
 import math, copy
 from pathlib import Path
 import common.time_utils as time_utils
-from modules.hdmap_lib.python.binding.libhdmap import Vec2d
 import common.map_utils as map_utils
+
 
 
 
@@ -48,6 +49,9 @@ def draw_all_lanes_(ax):
 
 
 def draw_points(points, draw_map = True):
+    '''
+    points   list[Vec2d]
+    '''
     fig, axes = plt.subplots(figsize=(9,9), dpi= 800)
     average_x = sum(point.x() for point in points) / len(points)
     average_y = sum(point.y() for point in points) / len(points)
@@ -74,33 +78,39 @@ def draw_points(points, draw_map = True):
 
 
 
-def get_xy_lim(ori, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 15):
-    if candidate_points != None:
-        candidate_points = np.asarray(candidate_points)
-        min_x = min(ori[0], np.min(candidate_points[:, 0]))
-        max_x = max(ori[0], np.max(candidate_points[:, 0]))
-        min_y = min(ori[1], np.min(candidate_points[:, 1]))
-        max_y = max(ori[1], np.max(candidate_points[:, 1]))
-    elif candidate_refpaths != None:
-        min_x, max_x = ori[0], ori[0]
-        min_y, max_y = ori[1], ori[1]
-        for refpath in candidate_refpaths:
-            refpath = np.asarray(refpath)
-            min_x = min(min_x, np.min(refpath[:, 0]))
-            max_x = max(max_x, np.max(refpath[:, 0]))
-            min_y = min(min_y, np.min(refpath[:, 1]))
-            max_y = max(max_y, np.max(refpath[:, 1]))
-    elif points_xy != None:
-        points_x, points_y = copy.deepcopy(points_xy)
-        points_x = list(points_x)
-        points_y = list(points_y)
-        points_x.append(ori[0])
-        points_y.append(ori[1])
-        min_x, max_x = min(points_x), max(points_x)
-        min_y, max_y = min(points_y), max(points_y)
+def get_xy_lim(ori = None, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 15):
+    if ori != None:
+        if candidate_points != None:
+            candidate_points = np.asarray(candidate_points)
+            min_x = min(ori[0], np.min(candidate_points[:, 0]))
+            max_x = max(ori[0], np.max(candidate_points[:, 0]))
+            min_y = min(ori[1], np.min(candidate_points[:, 1]))
+            max_y = max(ori[1], np.max(candidate_points[:, 1]))
+        elif candidate_refpaths != None:
+            min_x, max_x = ori[0], ori[0]
+            min_y, max_y = ori[1], ori[1]
+            for refpath in candidate_refpaths:
+                refpath = np.asarray(refpath)
+                min_x = min(min_x, np.min(refpath[:, 0]))
+                max_x = max(max_x, np.max(refpath[:, 0]))
+                min_y = min(min_y, np.min(refpath[:, 1]))
+                max_y = max(max_y, np.max(refpath[:, 1]))
+        elif points_xy != None:
+            points_x, points_y = copy.deepcopy(points_xy)
+            points_x = list(points_x)
+            points_y = list(points_y)
+            points_x.append(ori[0])
+            points_y.append(ori[1])
+            min_x, max_x = min(points_x), max(points_x)
+            min_y, max_y = min(points_y), max(points_y)
     else:
-        print("error")
-        exit()
+        if points_xy != None:
+            points_x, points_y = copy.deepcopy(points_xy)
+            points_x = list(points_x)
+            points_y = list(points_y)
+            min_x, max_x = min(points_x), max(points_x)
+            min_y, max_y = min(points_y), max(points_y)
+    
 
     return [min_x-extend, max_x+extend, min_y-extend, max_y+extend]
 
@@ -170,26 +180,79 @@ def draw_candidate_points(ori, candidate_points, output_dir="tmp"):
 #     ax.axis(roi_matrix)
 #     fig.savefig(f"{idx}'s refpath")
 
+def draw_by_id(ax, id, obj_type):
+    # 0:lane    1:junction
+    hdmap = map_utils.get_hdmap()
+    if obj_type == 0:
+        lane = hdmap.GetLaneById(IdInfo(id))
+        point_list = np.asarray([(point.x(), point.y()) for point in lane.polygon().points()])
+        text_str = "lane"
+    elif obj_type == 1:
+        junction = hdmap.GetJunctionById(IdInfo(id))
+        point_list = np.asarray([(point.x(), point.y()) for point in junction.polygon().points()])
+        text_str = "junction"
+    else:
+        print("wrong type")
+    mean_x, mean_y = point_list.mean(axis=0)
+    ax.plot(point_list[:,0], point_list[:,1], "bX-")
+    text_str += f"_{id}"
+    ax.text(mean_x,mean_y,text_str, zorder=15)
 
-def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, his_traj, fut_traj, output_dir="tmp"):
-    fig, ax = plt.subplots(figsize=(22,12),dpi=800)
-    draw_candidate_refpaths(ori, candidate_refpaths,my_ax=ax)
+
+
+def draw_units(units, fut_traj, output_dir="tmp"):
+    fig, ax = plt.subplots(figsize=(24,18),dpi=800)
     ax.axis('equal')
-    traj_all = np.concatenate((his_traj, fut_traj), axis=0)
-    roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:,0], traj_all[:,1]))
+    roi_matrix = get_xy_lim(points_xy=(fut_traj[:,0], fut_traj[:,1]),extend=250)
     ax.axis(roi_matrix)
-    ax.plot(his_traj[:,0], his_traj[:,1], color='red',zorder=15,alpha= 0.5)
+
+    # 地图
+    draw_all_lanes_(ax)
     ax.plot(fut_traj[:,0], fut_traj[:,1], marker='x', linestyle="--", color="green",alpha=0.5)
     ax.scatter(fut_traj[49,0], fut_traj[49,1], color='purple', zorder=15)
+    for unit in units:
+        draw_by_id(ax,unit[0], unit[1])
+
     output_dir = Path(output_dir)
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
         print(f"mkdir {output_dir}")
-    fig_save_path = output_dir / f'candidate_refpath_with_his_fut{time_utils.get_cur_time_string()}.jpg'
+    fig_save_path = output_dir / f'draw_fut_traj_and_units{time_utils.get_cur_time_string()}.jpg'
+    fig.savefig(fig_save_path)
+    print(f"draw_fut_traj_and_units at {fig_save_path.resolve()}")
+
+def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = None, his_traj = None, fut_traj = None, output_dir="tmp", other_info = None):
+    fig, ax = plt.subplots(figsize=(22,12),dpi=800)
+    # map/ candidate ref path/ gt candidate ref path/ agent head
+    draw_candidate_refpaths(ori, candidate_refpaths,my_ax=ax, cand_gt_idx = cand_gt_idx)
+    ax.axis('equal')
+    traj_all = np.concatenate((his_traj, fut_traj), axis=0)
+    roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:,0], traj_all[:,1]))
+    ax.axis(roi_matrix)
+    # history
+    ax.plot(his_traj[:,0], his_traj[:,1], color='red',zorder=15,alpha= 0.5)
+    # fut
+    ax.plot(fut_traj[:,0], fut_traj[:,1], marker='x', linestyle="--", color="green",alpha=0.5)
+    # fut 5s point
+    ax.scatter(fut_traj[49,0], fut_traj[49,1], color='purple', zorder=15)
+
+    # text
+    plt.figtext(0.2, 0.05, f"errors:{other_info['errors']}", ha="center", fontsize=12)
+    output_dir = Path(output_dir)
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
+        print(f"mkdir {output_dir}")
+    fig_name = f'candidate_refpath_with_his_fut{time_utils.get_cur_time_string()}'
+    if other_info != None:
+        fig_name += f"pkl_index{other_info['pkl_index']}_ego_frame{other_info['ego_frame']}_pkl_path:{other_info['pkl_path'].replace('/','_')}_way{other_info['way']}_target_id{other_info['target_id']}"
+        
+    fig_name += ".jpg"
+    fig_save_path = output_dir / fig_name
     fig.savefig(fig_save_path)
     print(f"draw candiadate_refpath at {fig_save_path.resolve()}")
+    plt.close()
 
-def draw_candidate_refpaths(ori, candidate_refpaths, output_dir="tmp", my_ax = None):
+def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = None, my_ax = None, refpaths_dis = None):
     '''
         candidate_refpaths: list[refpath]
         refpath: [(x1,y2),(x2,y2)]
@@ -200,9 +263,9 @@ def draw_candidate_refpaths(ori, candidate_refpaths, output_dir="tmp", my_ax = N
         ax = my_ax
 
     ax.axis("equal")
-    roi_matrix = get_xy_lim(ori, candidate_refpaths=candidate_refpaths)
+    roi_matrix = get_xy_lim(ori, candidate_refpaths=refpaths_cord)
     ax.axis(roi_matrix)
-    ax.set_title(f"total {len(candidate_refpaths)} candidate_refpaths")
+    ax.set_title(f"total {len(refpaths_cord)} candidate_refpaths")
 
 
     # 地图
@@ -213,15 +276,27 @@ def draw_candidate_refpaths(ori, candidate_refpaths, output_dir="tmp", my_ax = N
     corner_xs, corner_ys = calculate_box_corners(ori)
     ax.plot(corner_xs, corner_ys, color='b', linewidth=2.0)
 
-    colors = plt.cm.viridis(np.linspace(0, 1, len(candidate_refpaths)))
+    colors = plt.cm.viridis(np.linspace(0, 1, len(refpaths_cord)))
 
-    for idx, (refpath, color) in enumerate(zip(candidate_refpaths,colors)):
+    for idx, (refpath_cord,color) in enumerate(zip(refpaths_cord, colors)):
         # draw_one_refpath_one_pic(idx, refpath, color,roi_matrix)
+        if idx == cand_gt_idx:
+            ax.text(refpath_cord[0][0],refpath_cord[0][1], f"{idx}'s", color=color)
+            if refpaths_dis != None:
+                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], marker="*",color='purple', alpha=0.5, linewidth=3,label = f"{idx}:{refpaths_dis[idx]}")
+            else:
+                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], marker="*",color='purple', alpha=0.5, linewidth=3)
+            ax.text(refpath_cord[-1][0],refpath_cord[-1][1], f"{idx}'e", color=color)
+        else:
+            ax.text(refpath_cord[0][0],refpath_cord[0][1], f"{idx}'s", color=color)
+            if refpaths_dis != None:
+                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=1, label = f"{idx}:{refpaths_dis[idx]}")
+            else:
+                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=1)
 
-        ax.text(refpath[0][0],refpath[0][1], f"{idx}'s", color=color)
-        ax.plot([xy[0] for xy in refpath], [xy[1] for xy in refpath], color=color, alpha=0.5, linewidth=1)
-        ax.text(refpath[-1][0],refpath[-1][1], f"{idx}'e", color=color)
-
+            ax.text(refpath_cord[-1][0],refpath_cord[-1][1], f"{idx}'e", color=color)
+    if refpaths_dis != None:
+        plt.legend(loc='upper right', fontsize='small')
     if my_ax == None: 
         output_dir = Path(output_dir)
         if not output_dir.exists():

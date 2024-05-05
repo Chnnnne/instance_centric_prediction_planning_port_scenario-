@@ -25,16 +25,21 @@ class TrajDecoder(nn.Module):
             nn.Linear(hidden_size, 1),
             nn.Softmax(dim=2)
         )
+
+    def forward_path(self, feats, path_candidate, target_gt, path_gt,candidate_mask=None):
+        pass
+
+    
     def forward(self, feats, tar_candidate, target_gt, candidate_mask=None):
         """
-        feats: B,N,D
-        tar_candidate: B, N, M, 2
-        target_gt:  B, N, 1, 2
-        candidate_mask: B, N, M
+        feats: B,N,D                                                                           [b,all_n-Max, d_agent]
+        tar_candidate: B, N, M, 2           N个agent ， 每个agent共M的采样点（M是最大的）           [b,all_n-Max,Max-N-Max, 2]  
+        target_gt:  B, N, 1, 2              每个agent一个真值点                                   [b, all_n-Max, 1, 2]
+        candidate_mask: B, N, M             因为每个agent的采样点数量不同，因此 M标记哪些是和不是      [b,all_n-Max,Max-N-Max]
         """
         
         B, N, M, _ = tar_candidate.shape
-        feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1)
+        feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1) # B, N, M, D
 
         # stack the target candidates to the end of input feature
         feats_tar = torch.cat([feats_repeat, tar_candidate], dim=-1) # B, N, M, D+2
@@ -45,12 +50,12 @@ class TrajDecoder(nn.Module):
         tar_offsets = self.target_offset_layer(feats_tar) # B, N, M, 2
         
         m = min(target_probs.shape[2], self.m)
-        _, topk_indices = target_probs.topk(m, dim=2)
+        _, topk_indices = target_probs.topk(m, dim=2) # B, N, 50
         tar_indices = topk_indices.unsqueeze(-1).expand(topk_indices.shape[0], 
                                                         topk_indices.shape[1], 
                                                         topk_indices.shape[2], 
-                                                        tar_candidate.shape[-1])
-        target_pred_se = torch.gather(tar_candidate, dim=2, index=tar_indices) # B, N, m, 2
+                                                        tar_candidate.shape[-1]) # B,N,m,2
+        target_pred_se = torch.gather(tar_candidate, dim=2, index=tar_indices) # B, N, m, 2    inputB, N, M, 2    index B,N,m,2
         offset_pred_se = torch.gather(tar_offsets, dim=2, index=tar_indices) # B, N, m, 2
         
         target_pred = target_pred_se + offset_pred_se
@@ -63,7 +68,7 @@ class TrajDecoder(nn.Module):
 
         param = self.motion_estimator_layer(param_input) # B,N,m,n_order*2
         prob_input = torch.cat([feats_traj, param], dim=-1)
-        traj_probs = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, m
+        traj_probs = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, m 打分
         
         # 预测轨迹(teacher_force)
         feat_traj_with_gt = torch.cat([feats.unsqueeze(2), target_gt], dim=-1) # B, N, 1, D+2
