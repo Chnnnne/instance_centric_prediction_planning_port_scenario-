@@ -222,6 +222,7 @@ def draw_units(units, fut_traj, output_dir="tmp"):
     print(f"draw_fut_traj_and_units at {fig_save_path.resolve()}")
 
 def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = None, his_traj = None, fut_traj = None, output_dir="tmp", other_info = None):
+    print("begin draw ")
     fig, ax = plt.subplots(figsize=(22,12),dpi=800)
     # map/ candidate ref path/ gt candidate ref path/ agent head
     draw_candidate_refpaths(ori, candidate_refpaths,my_ax=ax, cand_gt_idx = cand_gt_idx)
@@ -229,15 +230,18 @@ def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = 
     traj_all = np.concatenate((his_traj, fut_traj), axis=0)
     roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:,0], traj_all[:,1]))
     ax.axis(roi_matrix)
-    # history
-    ax.plot(his_traj[:,0], his_traj[:,1], color='red',zorder=15,alpha= 0.5)
-    # fut
-    ax.plot(fut_traj[:,0], fut_traj[:,1], marker='x', linestyle="--", color="green",alpha=0.5)
-    # fut 5s point
-    ax.scatter(fut_traj[49,0], fut_traj[49,1], color='purple', zorder=15)
+    if his_traj != None:
+        # history
+        ax.plot(his_traj[:,0], his_traj[:,1], color='red',zorder=15,alpha= 0.5)
+    if fut_traj != None:
+        # fut
+        ax.plot(fut_traj[:,0], fut_traj[:,1], marker='x', linestyle="--", color="green",alpha=0.5)
+        # fut 5s point
+        ax.scatter(fut_traj[49,0], fut_traj[49,1], color='purple', zorder=15)
 
     # text
-    plt.figtext(0.2, 0.05, f"errors:{other_info['errors']}", ha="center", fontsize=12)
+    if other_info != None:
+        plt.figtext(0.2, 0.05, f"errors:{other_info['errors']}", ha="center", fontsize=12)
     output_dir = Path(output_dir)
     if not output_dir.exists():
         output_dir.mkdir(parents=True)

@@ -23,4 +23,3 @@ def main():
     logger.info('**********************End training**********************')
 if __name__ == '__main__':
     main()
-   

@@ -658,7 +658,7 @@ def load_seq_save_features(index):
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    for i in range(19, frame_num-50, 30): # 10f间隔遍历ego的所有f obs:2s fut:5s
+    for i in range(19, frame_num-50, 10): # 10f间隔遍历ego的所有f obs:2s fut:5s
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
         if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
@@ -763,11 +763,11 @@ if __name__=="__main__":
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     all_file_list = all_file_list[:int(len(all_file_list)/5)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
-    cur_files = train_files
+    cur_files = test_files
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     time.sleep(2)
     
-    cur_output_path = '/private/wangchen/instance_model_data/train'
+    cur_output_path = '/private/wangchen/instance_model_data/test'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)

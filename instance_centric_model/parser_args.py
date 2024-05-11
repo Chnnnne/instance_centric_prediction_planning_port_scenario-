@@ -18,12 +18,12 @@ def get_parser():
     #     '--dataset_dir', '-dd', default=f'/private/wanggang/instance_model_data/', type=str,
     #     help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model_data_small/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model_data/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=8, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=4, type=int, help='number of batch size')
     parser.add_argument(
-        '--workers', type=int, default=8, help='number of workers for dataloader')
+        '--workers', type=int, default=32, help='number of workers for dataloader')
     parser.add_argument(
         '--enable_log', '-el', default=True, type=str2bool, const=True,
         nargs='?', help="Set to True to open the tensorboard log")

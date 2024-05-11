@@ -12,7 +12,7 @@ class InterDataSet(Dataset):
         random.seed(777)
         random.shuffle(self.ids)
         if set_name=="train":
-            self.ids = self.ids[:2000000]
+            self.ids = self.ids[:1000000]
         else:
             self.ids = self.ids[:10000]
         
@@ -26,6 +26,9 @@ class InterDataSet(Dataset):
         return data_dict
     
     def collate_batch(self, batch_list):
+        '''
+        key_to_list['candidate_refpaths_cords'] = [sample-1 pad_candidate_refpaths_cords (all_n, max-N, 20,2), sample=2 pad_candidate_refpaths_cords, ...]
+        '''
         batch_size = len(batch_list)
         key_to_list = {}
         for key in batch_list[0].keys():
@@ -33,6 +36,18 @@ class InterDataSet(Dataset):
         
         input_dict = {}
         for key, val_list in key_to_list.items():
+            val_list = [torch.from_numpy(x) for x in val_list]
+            if key in ['agent_feats', 'agent_mask', 'agent_ctrs', 'agent_vecs', 'gt_preds',
+                       'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask']:
+                input_dict[key] = self.merge_batch_1d(val_list)
+            elif key in ['candidate_mask', 'gt_candts', 'rpe', 'rpe_mask']:
+                input_dict[key] = self.merge_batch_2d(val_list)
+            elif key in ['candidate_refpaths_cords', 'candidate_refpaths_vecs']:
+                input_dict[key] = self.merge_batch_2d_more(val_list)
+            else:
+                print(key)
+                continue
+            '''
             val_list = [torch.from_numpy(x) for x in val_list]
             if key in ['agent_feats', 'agent_mask', 'agent_ctrs', 'agent_vecs', 'gt_preds', 'gt_tar_offset',
                        'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask']:
@@ -42,13 +57,14 @@ class InterDataSet(Dataset):
             else:
                 print(key)
                 continue
+            '''
         return input_dict
                 
     def merge_batch_1d(self, tensor_list):# agent feats:list[all_n,20,13]      agent mask: list[all_n,20]
         assert len(tensor_list[0].shape) in [2, 3]
         only_2d_tensor = False
         if len(tensor_list[0].shape) == 2:
-            tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list] # [alln,2] -> [alln,2,1]      [bs,alln,2,1]
+            tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list] # [alln,20] -> [alln,20,1]      [bs,alln,20,1]
             only_2d_tensor = True
         tensor_list = [x.unsqueeze(dim=0) for x in tensor_list] #list[1, all_n,20,13]
         max_feat0 = max([x.shape[1] for x in tensor_list]) # all_n-Max
@@ -67,6 +83,25 @@ class InterDataSet(Dataset):
             ret_tensor = ret_tensor.squeeze(dim=-1)
         return ret_tensor
     
+    def merge_batch_2d_more(self, tensor_list):
+        assert len(tensor_list[0].shape) == 4
+        tensor_list = [x.unsqueeze(dim=0) for x in tensor_list] # list[1, all_n, Max-N, 20, 2]
+        max_feat0 = max([x.shape[1] for x in tensor_list]) # all_n-Max
+        max_feat1 = max([x.shape[2] for x in tensor_list]) # Max-N-Max
+        num_feat2 = tensor_list[0].shape[3] # 20
+        num_feat3 = tensor_list[0].shape[4] # 2
+        ret_tensor_list = []
+
+        for k in range(len(tensor_list)):
+            cur_tensor = tensor_list[k]
+            new_tensor = cur_tensor.new_zeros(cur_tensor.shape[0], max_feat0, max_feat1, num_feat2, num_feat3) # 1, all_n-Max, Max-N-Max, 2
+            new_tensor[:, :cur_tensor.shape[1], :cur_tensor.shape[2], :, :] = cur_tensor
+            ret_tensor_list.append(new_tensor)
+
+        ret_tensor = torch.cat(ret_tensor_list, dim=0)  # bs,all_n-Max, Max-N-Max, 20, 2
+        return ret_tensor
+
+
     def merge_batch_2d(self, tensor_list): # tar_candidate:  list[all_n, Max-N, 2]
         assert len(tensor_list[0].shape) in [2, 3]
         only_2d_tensor = False

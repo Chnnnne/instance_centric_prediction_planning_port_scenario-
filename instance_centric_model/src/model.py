@@ -57,12 +57,56 @@ class Model(nn.Module):
         self.relation_decoder = None
         if self.args.init_weights:
             self.apply(self._init_weights)
+
+    # def forward(self, batch_dict):
+    #     agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() # [b,all_n-Max,20,13]  [b,all_n-Max,20]
+    #     map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() # [b, map_element_num-Max, 20, 5]   [b, map_element_num-Max, 20]
+    #     agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # [b,all_n-Max, d_agent]
+    #     map_feats = self.map_net(map_polylines, map_polylines_mask) # [b, map_element_num-Max,d_map]
         
+    #     rpe, rpe_mask = batch_dict['rpe'].cuda(), batch_dict['rpe_mask'].cuda().bool()
+    #     batch_size, N, _, _= rpe.shape
+    #     rpe_feats_valid = self.rpe_net(rpe[rpe_mask])  # (N, C)
+    #     rpe_feats = rpe_feats_valid.new_zeros(batch_size, N, N, rpe_feats_valid.shape[-1])
+    #     rpe_feats[rpe_mask] = rpe_feats_valid
+        
+    #     agent_mask = (agent_polylines_mask.sum(dim=-1) > 0)  
+    #     map_mask = (map_polylines_mask.sum(dim=-1) > 0)  
+    #     agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # [b,all_n-Max, d_agent]
+        
+    #     plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool()
+    #     agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # ?
+        
+    #     tar_candidate, candidate_mask = batch_dict['tar_candidate'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
+    #     target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
+    #     target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
+    #     target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, tar_candidate, target_gt, candidate_mask)
+           
+    #     # 由贝塞尔控制点反推轨迹
+    #     # bezier_param = torch.cat([param, pred_targets], dim=-1) # B, N, m, (n_order+1)*2
+    #     bezier_control_points = param.view(param.shape[0],
+    #                                        param.shape[1],
+    #                                        param.shape[2], -1, 2) # B, N, m, n_order+1, 2
+    #     trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,m,future_steps,2
+        
+    #     # bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
+    #     bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
+    #                                                        param_with_gt.shape[1],
+    #                                                        param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1, 2
+    #     traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
+
+    #     return {"target_probs": target_probs,
+    #             "pred_offsets": pred_offsets,
+    #             "traj_with_gt": traj_with_gt,
+    #             "trajs": trajs,
+    #             "traj_probs": traj_probs
+    #            }  
+
     def forward(self, batch_dict):
         agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() # [b,all_n-Max,20,13]  [b,all_n-Max,20]
         map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() # [b, map_element_num-Max, 20, 5]   [b, map_element_num-Max, 20]
-        agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # [b,all_n-Max, d_agent]
-        map_feats = self.map_net(map_polylines, map_polylines_mask) # [b, map_element_num-Max,d_map]
+        agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # B,N,20,13 + B,N,20 -> [B,N,d_agent]
+        map_feats = self.map_net(map_polylines, map_polylines_mask) # B,N,20,5 + B,N,20 -> [b, map_element_num-Max,d_map]
         
         rpe, rpe_mask = batch_dict['rpe'].cuda(), batch_dict['rpe_mask'].cuda().bool()
         batch_size, N, _, _= rpe.shape
@@ -72,31 +116,31 @@ class Model(nn.Module):
         
         agent_mask = (agent_polylines_mask.sum(dim=-1) > 0)  
         map_mask = (map_polylines_mask.sum(dim=-1) > 0)  
-        agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # [b,all_n-Max, d_agent]
+        agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # agent_feats [b,all_n-Max, d_agent]
         
-        plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool()
-        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # ?
+        plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool() # B,N,50,4   B,N,50
+        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # ??用未来的信息来融合特征？
         
-        tar_candidate, candidate_mask = batch_dict['tar_candidate'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
+        candidate_refpaths_cords, candidate_refpaths_vecs, candidate_mask = batch_dict['candidate_refpaths_cords'].cuda(), batch_dict['candidate_refpaths_vecs'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
         target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
         target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
-        target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, tar_candidate, target_gt, candidate_mask)
-           
+        gt_refpath = batch_dict['gt_candts'] # [b, all_n-Max, Max-N-Max]
+        # target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, target_gt, candidate_mask)
+        cand_refpath_probs, param, traj_probs, param_with_gt = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, candidate_mask,batch_dict)
         # 由贝塞尔控制点反推轨迹
         # bezier_param = torch.cat([param, pred_targets], dim=-1) # B, N, m, (n_order+1)*2
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
-                                           param.shape[2], -1, 2) # B, N, m, n_order+1, 2
+                                           param.shape[2], -1, 2) # # B,N,M,n_order*2 -> B, N, m, n_order+1, 2
         trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,m,future_steps,2
         
-        # bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
+        # # bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
         bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
                                                            param_with_gt.shape[1],
-                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1, 2
+                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1*2 ->B, N, 1, n_order+1, 2
         traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
 
-        return {"target_probs": target_probs,
-                "pred_offsets": pred_offsets,
+        return {"cand_refpath_probs": cand_refpath_probs,
                 "traj_with_gt": traj_with_gt,
                 "trajs": trajs,
                 "traj_probs": traj_probs
@@ -143,37 +187,43 @@ class Model(nn.Module):
                 nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
         
     def compute_model_metrics(self, input_dict, output_dict):
-        pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda()
+        pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B,N,M-> B,N
         # 计算目标点有关的指标
         target_top = 0
-        gt_prob = input_dict['gt_candts'].cuda()[pred_mask]
+        gt_prob = input_dict['gt_candts'].cuda()[pred_mask]# B,N,M -> S,M
         if gt_prob.dim() == 3:
             gt_prob = gt_prob.squeeze(dim=-1)
-        batch_size, label_num = gt_prob.size()
-        gt_label = torch.argmax(gt_prob, -1)
-        target_prob = output_dict['target_probs'][pred_mask]
+        batch_size, label_num = gt_prob.size() # S, M
+        gt_label = torch.argmax(gt_prob, -1) # S,获取one-hot的idx
+        # target_prob = output_dict['target_probs'][pred_mask]
+        target_prob = output_dict['cand_refpath_probs'][pred_mask] # B,N,M -> S,M
         
-        max_probs, max_indices = torch.max(target_prob, dim=1)
+        max_probs, max_indices = torch.max(target_prob, dim=1) # S
         # 计算target的准确率
         for i in range(batch_size):
             if gt_label[i] ==max_indices[i]:
                 target_top += 1
-                
-        target_gt = input_dict["gt_preds"].cuda()[pred_mask][:, -1, :2]
-        target_candidate = input_dict["tar_candidate"].cuda()[pred_mask]
-        offset = output_dict['pred_offsets'][pred_mask]
-        target_pred = target_candidate[torch.arange(batch_size), max_indices] + offset[torch.arange(batch_size), max_indices]
+        '''   
+        target_gt = input_dict["gt_preds"].cuda()[pred_mask][:, -1, :2]# B, N, 50, 2 -> S, 50, 2 -> S, 2
+        target_candidate = input_dict["tar_candidate"].cuda()[pred_mask] # B, N, M, 2 -> S, M, 2
+        offset = output_dict['pred_offsets'][pred_mask] # B,N,M,2 -> S,M,2
+        target_pred = target_candidate[torch.arange(batch_size), max_indices] + offset[torch.arange(batch_size), max_indices]# S,2
+        # endpoint_pred = output_dict['trajs'].cuda()[pred_mask][:,:,-1,:2] #  B,N,m,future_steps,2 -> S,m,future_steps,2 -> S,M,2
+        # endpoint_pred = endpoint_pred[torch.arange(batch_size), max_indices] # S,2
+
         # 计算target的FDE
-        rmse = torch.linalg.norm(target_pred - target_gt, dim=-1)
+        rmse = torch.linalg.norm(target_pred - target_gt, dim=-1)# S,
         target_fde = torch.sum(rmse)
+        '''
      
 
         # 计算轨迹有关的指标
-        score = output_dict['traj_probs'][pred_mask]
-        traj_max_probs, traj_max_indices = torch.max(score, dim=1)
-        trajs = output_dict['trajs'][pred_mask]
-        traj_pred = trajs[torch.arange(batch_size), traj_max_indices].view(batch_size, 50, 2)
-        traj_gt = input_dict["gt_preds"].cuda()[pred_mask]
+        score = output_dict['traj_probs'][pred_mask] # B, N, M -> S, M
+        traj_max_probs, traj_max_indices = torch.max(score, dim=1) # S
+        trajs = output_dict['trajs'][pred_mask] # B, N, M, 50, 2 -> S, M, 50, 2
+        traj_pred = trajs[torch.arange(batch_size), traj_max_indices] # S, 50, 2
+        # traj_pred = trajs[torch.arange(batch_size), traj_max_indices].view(batch_size, 50, 2) 
+        traj_gt = input_dict["gt_preds"].cuda()[pred_mask]# B N 50 2 -> S 50 2
         
         # 计算traj的ADE
         squared_distance = torch.sum((traj_pred - traj_gt) ** 2, dim=2)
@@ -184,4 +234,49 @@ class Model(nn.Module):
         fde =  torch.linalg.norm(traj_pred[:, -1, :] - traj_gt[:, -1, :], dim=-1)
         traj_fde = torch.sum(fde)
             
-        return batch_size, target_top, target_fde, traj_ade, traj_fde
+        return batch_size, target_top, traj_ade, traj_fde
+    
+    # def compute_model_metrics(self, input_dict, output_dict):
+    #     pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B,N,M-> B,N
+    #     # 计算目标点有关的指标
+    #     target_top = 0
+    #     gt_prob = input_dict['gt_candts'].cuda()[pred_mask]# B,N,M -> S,M
+    #     if gt_prob.dim() == 3:
+    #         gt_prob = gt_prob.squeeze(dim=-1)
+    #     batch_size, label_num = gt_prob.size() # S, M
+    #     gt_label = torch.argmax(gt_prob, -1) # S,获取one-hot的idx
+    #     # target_prob = output_dict['target_probs'][pred_mask]
+    #     target_prob = output_dict['cand_refpath_probs'][pred_mask] # B,N,M -> S,M
+        
+    #     max_probs, max_indices = torch.max(target_prob, dim=1) # S
+    #     # 计算target的准确率
+    #     for i in range(batch_size):
+    #         if gt_label[i] ==max_indices[i]:
+    #             target_top += 1
+                
+    #     target_gt = input_dict["gt_preds"].cuda()[pred_mask][:, -1, :2]# B, N, 50, 2 -> S, 50, 2 -> S, 2
+    #     target_candidate = input_dict["tar_candidate"].cuda()[pred_mask] # B, N, M, 2 -> S, M, 2
+    #     offset = output_dict['pred_offsets'][pred_mask] # B,N,M,2 -> S,M,2
+    #     target_pred = target_candidate[torch.arange(batch_size), max_indices] + offset[torch.arange(batch_size), max_indices]
+    #     # 计算target的FDE
+    #     rmse = torch.linalg.norm(target_pred - target_gt, dim=-1)
+    #     target_fde = torch.sum(rmse)
+     
+
+    #     # 计算轨迹有关的指标
+    #     score = output_dict['traj_probs'][pred_mask]
+    #     traj_max_probs, traj_max_indices = torch.max(score, dim=1)
+    #     trajs = output_dict['trajs'][pred_mask]
+    #     traj_pred = trajs[torch.arange(batch_size), traj_max_indices].view(batch_size, 50, 2)
+    #     traj_gt = input_dict["gt_preds"].cuda()[pred_mask]
+        
+    #     # 计算traj的ADE
+    #     squared_distance = torch.sum((traj_pred - traj_gt) ** 2, dim=2)
+    #     distance = torch.sqrt(squared_distance)
+    #     traj_ade = torch.mean(distance, dim=1).sum()
+       
+    #     # 计算tarj的FDE
+    #     fde =  torch.linalg.norm(traj_pred[:, -1, :] - traj_gt[:, -1, :], dim=-1)
+    #     traj_fde = torch.sum(fde)
+            
+    #     return batch_size, target_top, target_fde, traj_ade, traj_fde

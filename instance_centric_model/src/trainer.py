@@ -227,13 +227,16 @@ class Trainer(object):
                 
             # 验证
             if cur_epoch >= self.args.start_validation and cur_epoch % self.args.validate_every == 0:
+            # if True:
                 torch.cuda.empty_cache()
                 self._evaluate_epoch(cur_epoch, mode='test')
  
     # 单个epoch的训练
     def _train_epoch(self, epoch):
         self.net.train()
-        losses_epoch = {"loss":0, "tar_cls_loss": 0, "tar_offset_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0}
+        # losses_epoch = {"loss":0, "tar_cls_loss": 0, "tar_offset_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0}
+        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0}
+        # total_it_each_epoch = int(0.1*len(self.data_loaders['train']))
         total_it_each_epoch = len(self.data_loaders['train'])
         dataloader_iter = iter(self.data_loaders['train'])
         with tqdm.trange(0, total_it_each_epoch, desc='train_epoch', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
@@ -250,8 +253,8 @@ class Trainer(object):
                 loss, loss_dict = self.loss(input_dict, output_dict, epoch)
 
                 losses_epoch["loss"] += loss.detach().item()
-                losses_epoch["tar_cls_loss"] += loss_dict["tar_cls_loss"].detach().item()
-                losses_epoch["tar_offset_loss"] += loss_dict["tar_offset_loss"].detach().item()
+                losses_epoch["ref_cls_loss"] += loss_dict["ref_cls_loss"].detach().item()
+                # losses_epoch["tar_offset_loss"] += loss_dict["tar_offset_loss"].detach().item()
                 losses_epoch["traj_loss"] += loss_dict["traj_loss"].detach().item()
                 losses_epoch["score_loss"] += loss_dict["score_loss"].detach().item()
                 if "safety_loss" in loss_dict:
@@ -283,27 +286,64 @@ class Trainer(object):
                     dataloader_iter = iter(self.data_loaders['test'])
                     input_dict = next(dataloader_iter)
                 output_dict = self.net(input_dict)
-                batch_size, top, fde, t_ade, t_fde = self.net.module.compute_model_metrics(input_dict, output_dict)
+                batch_size, top, t_ade, t_fde = self.net.module.compute_model_metrics(input_dict, output_dict)
                 total += torch.tensor(batch_size).cuda()
                 top_acc += torch.tensor(top).cuda()
-                target_fde += torch.as_tensor(fde, device='cuda')
+                # target_fde += torch.as_tensor(fde, device='cuda')
                 traj_ade += torch.as_tensor(t_ade, device='cuda')
                 traj_fde += torch.as_tensor(t_fde, device='cuda')
         dist.barrier()
-        for x in [total, top_acc, target_fde, traj_ade, traj_fde]:
+        for x in [total, top_acc, traj_ade, traj_fde]:
             dist.reduce(x, 0) # reduce并返回给进程0
   
         if self.args.local_rank == 0:
             top_acc = 100 * top_acc.item() / total.item()
-            target_fde = target_fde.item() / total.item()
+            # target_fde = target_fde.item() / total.item()
             traj_ade = traj_ade.item() / total.item()
             traj_fde = traj_fde.item() / total.item()
-            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, target_fde={target_fde:.5f}, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
+            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
             if traj_ade < self.best_ade:
                 self.best_ade = traj_ade
                 self._save_checkpoint(epoch, best_epoch=True)  # save model
                 self.logger.info(f"Saved best checkpoint at epoch {epoch}")
 
+    # @torch.no_grad()
+    # def _evaluate_epoch(self, epoch, mode='test'):
+    #     """
+    #     在测试集上对模型进行验证，计算准确率和对应的损失
+    #     """
+    #     self.net.eval()  # evaluation mode
+    #     total, top_acc, target_fde, traj_ade, traj_fde = torch.zeros(5).cuda()
+    #     total_it_each_epoch = len(self.data_loaders[mode])
+    #     dataloader_iter = iter(self.data_loaders[mode])
+    #     with tqdm.trange(0, total_it_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
+    #         for cur_it in pbar:
+    #             try:
+    #                 input_dict = next(dataloader_iter)
+    #             except StopIteration:
+    #                 dataloader_iter = iter(self.data_loaders['test'])
+    #                 input_dict = next(dataloader_iter)
+    #             output_dict = self.net(input_dict)
+    #             batch_size, top, fde, t_ade, t_fde = self.net.module.compute_model_metrics(input_dict, output_dict)
+    #             total += torch.tensor(batch_size).cuda()
+    #             top_acc += torch.tensor(top).cuda()
+    #             target_fde += torch.as_tensor(fde, device='cuda')
+    #             traj_ade += torch.as_tensor(t_ade, device='cuda')
+    #             traj_fde += torch.as_tensor(t_fde, device='cuda')
+    #     dist.barrier()
+    #     for x in [total, top_acc, target_fde, traj_ade, traj_fde]:
+    #         dist.reduce(x, 0) # reduce并返回给进程0
+  
+    #     if self.args.local_rank == 0:
+    #         top_acc = 100 * top_acc.item() / total.item()
+    #         target_fde = target_fde.item() / total.item()
+    #         traj_ade = traj_ade.item() / total.item()
+    #         traj_fde = traj_fde.item() / total.item()
+    #         self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, target_fde={target_fde:.5f}, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
+    #         if traj_ade < self.best_ade:
+    #             self.best_ade = traj_ade
+    #             self._save_checkpoint(epoch, best_epoch=True)  # save model
+    #             self.logger.info(f"Saved best checkpoint at epoch {epoch}")
         
         
 if __name__ == "__main__":

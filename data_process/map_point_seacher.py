@@ -204,7 +204,7 @@ class MapPointSeacher():
                 print("len(map_paths) == 0")
                 return [],[],[],[]
             map_paths = self.filter_mappaths(map_paths)
-            refpaths_cord,  _, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现猜出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
+            refpaths_cord, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现采出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
             # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
 
             refpaths_cord, kd_trees = self.cluster_refpath(refpaths_cord)
@@ -290,22 +290,22 @@ class MapPointSeacher():
             one_refpath_dis = []
             dis_to_sample = right+0.5
             for idx in range(len(mappath)):
-                cords, vecs, dis_sampled = self.sample_pathunit(mappath, idx, one_refpath_cord,dis_to_sample=dis_to_sample)
+                cords, dis_sampled = self.sample_pathunit(mappath, idx, one_refpath_cord,dis_to_sample=dis_to_sample)
                 dis_to_sample -= dis_sampled
                 one_refpath_cord.extend(cords) # (50,2)
-                one_refpath_vec.extend(vecs) # (50,)
+                # one_refpath_vec.extend(vecs) # (50,)
                 one_refpath_dis.append(dis_sampled) # (num of pathunit, )
                 if dis_to_sample <= 0.2:
                     break
             refpaths_cord.append(one_refpath_cord)# list[(50,2),(50,2)...]
-            refpaths_vec.append(one_refpath_vec) # list[(50),(50)...]
+            # refpaths_vec.append(one_refpath_vec) # list[(50),(50)...]
             refpaths_dis.append(one_refpath_dis) # list[one_ref_path_dis_list]
 
             
 
         # print("mappaths",mappaths)
         # exit()
-        return refpaths_cord, [], refpaths_dis
+        return refpaths_cord, refpaths_dis
 
     def cluster_refpath(self, in_refpaths_cords):
         '''
@@ -499,7 +499,7 @@ class MapPointSeacher():
         cumulative_distances = np.insert(np.cumsum(distances), 0, 0)  # 在开始插入0，表示从起点开始
         if cumulative_distances[-1] < 5:
             print("gt轨迹小于5m，可能为静止，该case直接过滤掉")
-            return -1
+            return -1, [0]
 
         else:
             if cumulative_distances[-1] >= 50:
@@ -513,6 +513,9 @@ class MapPointSeacher():
                 sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=30, end_dis=50, cumulative_distances=cumulative_distances)
             else:
                 print("gt轨迹在5-50m之间，取真实轨迹的后40%长度的点进行比较")
+                if agt_traj_fut_all.shape[0] < 4:
+                    print("真值点过少")
+                    return -1, [0]
                 # start_idx = int(len(agt_traj_fut_all) * 0.6)
                 # agt_traj_fut_all_sample = agt_traj_fut_all[start_idx:]
                 sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=cumulative_distances[-1] * 0.6, cumulative_distances=cumulative_distances)
@@ -520,7 +523,7 @@ class MapPointSeacher():
             agt_traj_fut_all_sample = np.column_stack((sampled_x, sampled_y))
             # 计算 agt_traj_sample和候选ref逐一计算一个距离， 距离定义：
             errors = []
-            weights = np.linspace(0.9,1.1,21)
+            weights = np.linspace(0.85,1.15,21)
             for idx, (refpath_cords, weight) in enumerate(zip(candidate_refpaths_cords, weights)):
                 dis = math_utils.calculate_trajectory_sum_projection_distance_use_KDTree(agt_traj_fut_all_sample,refpath_cords,kd_trees[idx])
                 errors.append(dis * weight)
@@ -529,7 +532,7 @@ class MapPointSeacher():
             
             min2_error_idx = np.argsort(errors)[:2]
             min_errors = errors[min2_error_idx]
-            print("@"*70)
+            print("@"*20)
             print("errors", errors)
 
             if (len(errors)==1 and errors[0] < 50) or \
@@ -556,17 +559,12 @@ class MapPointSeacher():
                 # print("can't find the best gt")
                 # print("(min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3)", (min_dis[0] < 50 and min_dis[1] > 50 and min_dis[1] - min_dis[0] > min_dis[0]*1/3))
                 # print("(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6)",(min_dis[0]< 50 and min_dis[1] < 50 and min_dis[1] - min_dis[0] > min_dis[0] * 1/6))
+                print("errors not satisfy the condition, filter")
                 return -1, errors
             # num = dists[dists < 5]
             # if num
             # 足够小，并且没有其他的跟它很相近
 
-            
-
-
-
-            
-        
 
 
     def get_candidate_gt_refpath(self, agt_traj_fut_all, candidate_mappaths, candidate_refpaths_cord):
@@ -638,11 +636,21 @@ class MapPointSeacher():
 
             
             
-    def sample_points(self, cords, num = 21, start_dis = 0, end_dis = None, cumulative_distances = None):
+    def sample_points(self, cords, num = 21, start_dis = 0, end_dis = None, cumulative_distances = None, return_content = "xy"):
         # cords [n,2]
+        if type(cords) == list:
+            cords = np.asarray(cords)
         if type(cumulative_distances) != np.ndarray and type(cumulative_distances) != list:
             distances = np.sqrt(np.sum(np.diff(cords, axis=0)**2, axis=1))
             cumulative_distances = np.insert(np.cumsum(distances), 0, 0)  # 在开始插入0，表示从起点开始
+        # 去重
+        
+        if len(np.unique(cumulative_distances)) != len(cumulative_distances):
+            print("Warning: 'cumulative_distances' contains duplicate values.")
+            # print(cumulative_distances)
+            unique_indices = np.unique(cumulative_distances, return_index=True)[1]
+            cumulative_distances = cumulative_distances[unique_indices]
+            cords = cords[unique_indices]
         # 创建插值函数
         interp_x = interp1d(cumulative_distances, cords[:, 0], kind='quadratic',fill_value="extrapolate")
         interp_y = interp1d(cumulative_distances, cords[:, 1], kind='quadratic',fill_value="extrapolate")
@@ -654,9 +662,22 @@ class MapPointSeacher():
         # 计算新的x和y坐标
         sampled_x = np.asarray(interp_x(sample_points),dtype=np.float32)
         sampled_y = np.asarray(interp_y(sample_points),dtype=np.float32)
-        return sampled_x, sampled_y
+        if return_content == "xy":
+            return sampled_x, sampled_y
+        elif return_content == "points":
+            return np.column_stack((sampled_x,sampled_y))
 
-
+    def get_refpath_vec(self, refpaths_cords):
+        '''
+            return  refpaths_vecs: list[ndarray:shape 20,2]
+        '''
+        refpaths_vecs = []
+        for cords in refpaths_cords:
+            vecs = np.diff(cords, axis=0).astype(np.float32)
+            vecs = np.concatenate((vecs, vecs[-1][np.newaxis, :]), axis = 0)
+            refpaths_vecs.append(vecs)
+        return refpaths_vecs
+    
     def get_traj_len(self, traj):
         traj = np.asarray(traj)
         diff = traj[1:] - traj[:-1]
@@ -779,7 +800,7 @@ class MapPointSeacher():
                         
 
 
-        return lane_segs, [], sampled_dis
+        return lane_segs, sampled_dis
 
     def sample_candidate_points_v2(self, map_paths, grid_candidate_points):
         point = Vec2d()
