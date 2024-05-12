@@ -188,7 +188,8 @@ class Loss(nn.Module):
         _, M, horizon_2_times = traj_candidate.size()
         dis = torch.pow(traj_candidate - traj_gt.unsqueeze(1), 2).view(-1, M, int(horizon_2_times / 2), 2)
         # S,m,100 - S,1,100       (S,m,100)**2        view (S,m,50,2)
-        dis, _ = torch.sqrt(torch.max(torch.sum(dis, dim=3), dim=2)) # (S,m,50)  --max-> S,m
+        dis, _ = torch.max(torch.sum(dis, dim=3), dim=2)# (S,m,50,2)---sum-->(S,m,50)  --max-> S,m
+        dis = torch.sqrt(dis)
         # dis= torch.sqrt(torch.sum(dis, dim=3)) # (S,m,50)  
         # weight = torch.linspace(0.5,1.5,int(horizon_2_times / 2)).cuda()
         # res = torch.sum(dis*weight, axis = 2)
