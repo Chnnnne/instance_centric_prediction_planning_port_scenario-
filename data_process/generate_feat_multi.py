@@ -303,13 +303,11 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
                 candidate_refpaths_vecs = np.zeros((1, 20, 2))#(1,20,2)
                 candts_mask = np.zeros((1))#(1, )
             else:
-                # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,his_traj=agt_traj_his,fut_traj=agt_traj_fut_all)
+                plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,his_traj=agt_traj_his,fut_traj=agt_traj_fut_all)
                 gt_cand = np.zeros(len(candidate_refpaths_cords),dtype=np.int32) # (N,)
-                gt_cand[-1] = 1
+                gt_cand[gt_idx] = 1
                 candidate_refpaths_cords = [mp_seacher.sample_points(refpath_cords, num=20,return_content="points") for refpath_cords in candidate_refpaths_cords] # list[ndarray:shape(50,2)] ->  (N, 20, 2)
                 candidate_refpaths_vecs = mp_seacher.get_refpath_vec(candidate_refpaths_cords) #list[ndarray] (N, 20, 2)
-                # ！转化坐标系！！！！！！！！！！！！！
-                # candidate_refpaths_cords = transform_to_local_coords(candidate_refpaths_cords,center_xy,center_heading)
                 candidate_refpaths_vecs = np.asarray(candidate_refpaths_vecs)# (N, 20, 2)
                 candidate_refpaths_cords = [transform_to_local_coords(refpath_cord, center_xy, center_heading) for refpath_cord in candidate_refpaths_cords]
                 candidate_refpaths_cords = np.asarray(candidate_refpaths_cords) # (N, 20, 2)
@@ -758,8 +756,8 @@ if __name__=="__main__":
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    input_path = '/private2/wanggang/pre_log_inter_data'
-    # input_path = '/private/wangchen/pre_log_inter_data_small'
+    # input_path = '/private2/wanggang/pre_log_inter_data'
+    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     all_file_list = all_file_list[:int(len(all_file_list)/5)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
@@ -772,8 +770,10 @@ if __name__=="__main__":
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    pool = multiprocessing.Pool(processes=16)
-    pool.map(load_seq_save_features, range(len(cur_files)))
+    load_seq_save_features(index= -1, file_path="/private/wangchen/instance_model/instance_model_data/test/howo32_1683498380.743353.pkl")
+    # pool = multiprocessing.Pool(processes=16)
+    # pool.map(load_seq_save_features, range(len(cur_files)))
+
     # for i in range(len(cur_files)): # 19 error 21 draw
     #     print("--"*20, i)
     # #     # my_candidate_refpath_search_test(i)

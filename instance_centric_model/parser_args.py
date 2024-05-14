@@ -18,10 +18,10 @@ def get_parser():
     #     '--dataset_dir', '-dd', default=f'/private/wanggang/instance_model_data/', type=str,
     #     help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model_data/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=4, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=16, type=int, help='number of batch size')
     parser.add_argument(
         '--workers', type=int, default=32, help='number of workers for dataloader')
     parser.add_argument(

@@ -230,10 +230,10 @@ def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = 
     traj_all = np.concatenate((his_traj, fut_traj), axis=0)
     roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:,0], traj_all[:,1]))
     ax.axis(roi_matrix)
-    if his_traj != None:
+    if type(his_traj) == np.ndarray:
         # history
         ax.plot(his_traj[:,0], his_traj[:,1], color='red',zorder=15,alpha= 0.5)
-    if fut_traj != None:
+    if type(fut_traj) == np.ndarray:
         # fut
         ax.plot(fut_traj[:,0], fut_traj[:,1], marker='x', linestyle="--", color="green",alpha=0.5)
         # fut 5s point

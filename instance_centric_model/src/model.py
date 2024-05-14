@@ -125,25 +125,22 @@ class Model(nn.Module):
         target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
         target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
         gt_refpath = batch_dict['gt_candts'] # [b, all_n-Max, Max-N-Max]
-        # target_probs, pred_targets, pred_offsets, param, param_with_gt, traj_probs = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, target_gt, candidate_mask)
         cand_refpath_probs, param, traj_probs, param_with_gt = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, candidate_mask,batch_dict)
         # 由贝塞尔控制点反推轨迹
-        # bezier_param = torch.cat([param, pred_targets], dim=-1) # B, N, m, (n_order+1)*2
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
                                            param.shape[2], -1, 2) # # B,N,M,n_order*2 -> B, N, m, n_order+1, 2
         trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,m,future_steps,2
         
-        # # bezier_param_with_gt = torch.cat([param_with_gt, target_gt], dim=-1) # B, N, 1, (n_order+1)*2
         bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
                                                            param_with_gt.shape[1],
                                                            param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1*2 ->B, N, 1, n_order+1, 2
         traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
 
-        return {"cand_refpath_probs": cand_refpath_probs,
-                "traj_with_gt": traj_with_gt,
-                "trajs": trajs,
-                "traj_probs": traj_probs
+        return {"cand_refpath_probs": cand_refpath_probs, # B,N,M
+                "traj_with_gt": traj_with_gt,#B,N,1,50,2
+                "trajs": trajs, # B,N,M,50,2
+                "traj_probs": traj_probs # B,N,M
                }  
         
     def _get_T_matrix_bezier(self, n_order, n_step):

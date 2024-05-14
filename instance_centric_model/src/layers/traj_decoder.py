@@ -77,11 +77,18 @@ class TrajDecoder(nn.Module):
 
     def forward(self, feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, candidate_mask=None,batch_dict = None):
         """
-        feats: B,N,D                                                                           [b,all_n-Max, d_agent]
-        candidate_refpaths_cords:   B,N,M,20,2                                                           [b,all_n-Max,Max-N-Max, 20, 2] 
-        candidate_refpaths_vecs: B,N,M,20,2  N个agent ， 每个agent共M的采样点（M是最大的）            [b,all_n-Max,Max-N-Max, 20, 2]  
-        gt_refpath:  B, N, M                真值refpath one hot                                 [b, all_n-Max, Max-N-Max]
-        candidate_mask: B, N, M             因为每个agent的采样点数量不同，因此 M标记哪些是和不是      [b,all_n-Max,Max-N-Max]
+        input:
+            - feats: B,N,D                                                                           [b,all_n-Max, d_agent]
+            - candidate_refpaths_cords:   B,N,M,20,2                                                           [b,all_n-Max,Max-N-Max, 20, 2] 
+            - candidate_refpaths_vecs: B,N,M,20,2  N个agent ， 每个agent共M的采样点（M是最大的）            [b,all_n-Max,Max-N-Max, 20, 2]  
+            - gt_refpath:  B, N, M                真值refpath one hot                                 [b, all_n-Max, Max-N-Max]
+            - candidate_mask: B, N, M             因为每个agent的采样点数量不同，因此 M标记哪些是和不是      [b,all_n-Max,Max-N-Max]
+        
+        output:
+            - cand_refpath_probs:   B,N,M 
+            - param:    B,N,M,(n_order+1)*2
+            - traj_probs:       B, N, M
+            - param_with_gt:     B,N,1,(n_order+1)*2
         """
         #可视化验证
         # self.vis_debug(candidate_refpaths_cords=candidate_refpaths_cords, candidate_refpaths_vecs=candidate_refpaths_vecs,gt_refpath=gt_refpath,candidate_mask=candidate_mask,batch_dict=batch_dict)
@@ -89,14 +96,14 @@ class TrajDecoder(nn.Module):
         feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1) # B, N, M, D
         feats_cand = torch.cat([feats_repeat, candidate_refpaths_cords.reshape(B,N,M,-1), candidate_refpaths_vecs.reshape(B,N,M,-1)], dim=-1) # B,N,M, D+40+40
         prob_tensor = self.cand_refpath_prob_layer(feats_cand).squeeze(-1) # B,N,M, D+40+40 -> B,N,M 很多空的D 4040送入预测器
-        cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据的概率为0
+        cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
 
         param_input = feats_cand  # B,N,M, D+40+40
-        param = self.motion_estimator_layer(param_input) # B,N,M,(n_order+1)*2 空的数据也会预测轨迹
+        param = self.motion_estimator_layer(param_input) # B,N,M,(n_order+1)*2 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略
 
         prob_input = torch.cat([feats_repeat, param], dim=-1) # B, N, M, D + (n_order+1)*2
-        traj_probs = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, M 打分 空的数据也会打分，没有做mask
-        
+        traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, M 打分 空的parm和特征数据也会打分，做了softmax但没做mask，因此没mask的位置也会有概率评分
+        traj_probs = self.masked_softmax(traj_prob_tensor, candidate_mask, dim = -1) # B,N,M + B,N,M
         # 预测轨迹(teacher_force)
         # feat_traj_with_gt = torch.cat([feats.unsqueeze(2), target_gt], dim=-1) # B, N, 1, D+2
         # param_with_gt = self.motion_estimator_layer(feat_traj_with_gt) # B,N,1,(n_order+1)*2

@@ -12,7 +12,7 @@ class InterDataSet(Dataset):
         random.seed(777)
         random.shuffle(self.ids)
         if set_name=="train":
-            self.ids = self.ids[:1000000]
+            self.ids = self.ids[:50000]
         else:
             self.ids = self.ids[:10000]
         
