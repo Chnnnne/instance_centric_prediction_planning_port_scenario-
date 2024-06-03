@@ -266,11 +266,12 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
         all_candidate_refpaths_vecs:    n , Max-N, 20,2     
         gt_preds:       n, 50, 2
         gt_cands:       n, Max-N, 
+        gt_vel_mode:     n,       值只能是123，代表加、匀、减
         candidate_mask:      n, Max-N
 
     '''
     n = len(target_ids)
-    all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, all_gt_candts, all_candidate_mask = [], [], [], [], []
+    all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, all_gt_candts, gt_vel_mode, all_candidate_mask = [], [], [], [], [], []
     valid_flag = False
     for i in range(n):
         target_id, cur_index = target_ids[i]
@@ -283,6 +284,15 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
         agt_traj_fut = np.column_stack((agent_info['x'][cur_index+1:cur_index+51].copy(), agent_info['y'][cur_index+1:cur_index+51].copy())).astype(np.float32)
         agt_traj_fut = transform_to_local_coords(agt_traj_fut, center_xy, center_heading)
         agt_traj_fut_all = np.column_stack((agent_info['x'][cur_index+1:].copy(), agent_info['y'][cur_index+1:].copy())).astype(np.float32)
+        # 计算该agent未来5s的加减速行为
+        distances = np.sqrt(np.sum(np.diff(agt_traj_fut, axis=0)**2, axis=1))
+        cumulative_distance = np.cumsum(distances)[-1]  # 在开始插入0，表示从起点开始
+        obs_v = agent_info['vel'][cur_index]
+        vel_mode = 2
+        if obs_v * 5 + 5 < cumulative_distance:
+            vel_mode = 1 # 加速
+        elif obs_v * 5 - 5 > cumulative_distance:
+            vel_mode = 3 # 减速
         # 采样目标点
         ori = [agent_info['x'][cur_index], agent_info['y'][cur_index], 
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
@@ -303,7 +313,7 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
                 candidate_refpaths_vecs = np.zeros((1, 20, 2))#(1,20,2)
                 candts_mask = np.zeros((1))#(1, )
             else:
-                plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,his_traj=agt_traj_his,fut_traj=agt_traj_fut_all)
+                # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,his_traj=agt_traj_his,fut_traj=agt_traj_fut_all)
                 gt_cand = np.zeros(len(candidate_refpaths_cords),dtype=np.int32) # (N,)
                 gt_cand[gt_idx] = 1
                 candidate_refpaths_cords = [mp_seacher.sample_points(refpath_cords, num=20,return_content="points") for refpath_cords in candidate_refpaths_cords] # list[ndarray:shape(50,2)] ->  (N, 20, 2)
@@ -316,20 +326,21 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
 
         all_candidate_refpaths_cords.append(candidate_refpaths_cords) #(n, N, 20, 2)
         all_candidate_refpaths_vecs.append(candidate_refpaths_vecs)# (n, N, 20, 2)
-        
         gt_preds.append(agt_traj_fut) # n, 50, 2
+        gt_vel_mode.append(vel_mode) # n
         all_gt_candts.append(gt_cand) # n, N
         all_candidate_mask.append(candts_mask) # n ,N
             
     if not valid_flag:# 如果改taget_ids列表都是无效的数据就直接返回None
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     else:
         all_candidate_refpaths_cords = pad_array_list(all_candidate_refpaths_cords) # n, Max-N,20, 2
         all_candidate_refpaths_vecs = pad_array_list(all_candidate_refpaths_vecs) # n, Max-N, 20, 2
         gt_preds = np.stack(gt_preds) # n, 50, 2
+        gt_vel_mode = np.array(gt_vel_mode) # n,
         all_gt_candts = pad_array_list(all_gt_candts) # n,Max-N
         all_candidate_mask = pad_array_list(all_candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
-    return all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, all_gt_candts, all_candidate_mask
+    return all_candidate_refpaths_cords, all_candidate_refpaths_vecs, gt_preds, gt_vel_mode, all_gt_candts, all_candidate_mask
 
 def generate_his_feats(data_info, agent_ids):
     '''
@@ -669,7 +680,7 @@ def load_seq_save_features(index):
 
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
-        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
+        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts,  candidate_mask = generate_future_feats_path(data_info, target_ids)
         # gt_preds: target_n, 50, 2真实轨迹
         # path_candidate: target_n, max-N,20（固定20）,2*3+2*3
         # gt_candts: target_n, max-N 标记哪一个是真值candidate path，后面的path打分模块要算cross entropy loss
@@ -698,6 +709,7 @@ def load_seq_save_features(index):
         pad_candidate_refpaths_cords = pad_array(candidate_refpaths_cords, (num, candidate_refpaths_cords.shape[1], candidate_refpaths_cords.shape[2], candidate_refpaths_cords.shape[3])) # all_n, max-N, 20,2
         pad_candidate_refpaths_vecs = pad_array(candidate_refpaths_vecs, (num, candidate_refpaths_vecs.shape[1], candidate_refpaths_vecs.shape[2], candidate_refpaths_vecs.shape[3])) # all_n, max-N, 20,2
         pad_gt_preds = pad_array(gt_preds, (num, gt_preds.shape[1], gt_preds.shape[2])) # all_n, 50, 2
+        pad_gt_vel_mode = pad_array(gt_vel_mode, (num))# all_n, 
         pad_gt_candts = pad_array(gt_candts, (num, gt_candts.shape[1])) # all_n, max-N
         pad_candidate_mask = pad_array(candidate_mask,(num, candidate_mask.shape[1])) # all_n, max-N
         pad_plan_feat = pad_array(plan_feat, (num, plan_feat.shape[1], plan_feat.shape[2])) # all_n, 50, 4
@@ -723,6 +735,7 @@ def load_seq_save_features(index):
         feat_data['candidate_refpaths_cords'] = pad_candidate_refpaths_cords.astype(np.float32)# all_n, max-N, 20,2
         feat_data['candidate_refpaths_vecs'] = pad_candidate_refpaths_vecs.astype(np.float32)# all_n, max-N, 20,2
         feat_data['gt_preds'] = pad_gt_preds.astype(np.float32)# all_n, 50,2
+        feat_data['gt_vel_mode'] = pad_gt_vel_mode.astype(np.int32) # all_n
         feat_data['gt_candts'] = pad_gt_candts.astype(np.float32) # all_n, max-N
         feat_data['candidate_mask'] = pad_candidate_mask.astype(np.int32) # all_n, max-N
     
@@ -756,8 +769,8 @@ if __name__=="__main__":
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    # input_path = '/private2/wanggang/pre_log_inter_data'
-    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
+    input_path = '/private2/wanggang/pre_log_inter_data'
+    # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     all_file_list = all_file_list[:int(len(all_file_list)/5)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
@@ -765,14 +778,14 @@ if __name__=="__main__":
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     time.sleep(2)
     
-    cur_output_path = '/private/wangchen/instance_model_data/train'
+    # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data_new_version/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    load_seq_save_features(index= -1, file_path="/private/wangchen/instance_model/instance_model_data/test/howo32_1683498380.743353.pkl")
-    # pool = multiprocessing.Pool(processes=16)
-    # pool.map(load_seq_save_features, range(len(cur_files)))
+    pool = multiprocessing.Pool(processes=16)
+    pool.map(load_seq_save_features, range(len(cur_files)))
 
     # for i in range(len(cur_files)): # 19 error 21 draw
     #     print("--"*20, i)

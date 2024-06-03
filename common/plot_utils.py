@@ -228,7 +228,10 @@ def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = 
     draw_candidate_refpaths(ori, candidate_refpaths,my_ax=ax, cand_gt_idx = cand_gt_idx)
     ax.axis('equal')
     traj_all = np.concatenate((his_traj, fut_traj), axis=0)
-    roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:,0], traj_all[:,1]))
+    end = -1
+    if traj_all.shape[0] > 150:
+        end = 150
+    roi_matrix = get_xy_lim(ori, points_xy=(traj_all[:end,0], traj_all[:end,1]))
     ax.axis(roi_matrix)
     if type(his_traj) == np.ndarray:
         # history
