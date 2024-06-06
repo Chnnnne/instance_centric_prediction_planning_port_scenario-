@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from .res_mlp import ResMLP
 
 class TrajDecoder(nn.Module):
-    def __init__(self, input_size, hidden_size, n_order=7, m=50, embed_dim = 4):
+    def __init__(self, input_size, hidden_size, n_order=7, m=50, embed_dim = 0):
         super().__init__()
         self.m = m
         # self.taregt_prob_layer = nn.Sequential(
@@ -41,9 +41,9 @@ class TrajDecoder(nn.Module):
         )
 
         # 可学习的速度嵌入向量
-        self.accelerate_embedding = nn.Parameter(torch.randn(embed_dim))# (32, )
-        self.constant_speed_embedding = nn.Parameter(torch.randn(embed_dim))
-        self.decelerate_embedding = nn.Parameter(torch.randn(embed_dim))
+        # self.accelerate_embedding = nn.Parameter(torch.randn(1))# (32, )
+        # self.constant_speed_embedding = nn.Parameter(torch.randn(1))
+        # self.decelerate_embedding = nn.Parameter(torch.randn(1))
 
     # def vis_debug(self, candidate_refpaths_cords,candidate_refpaths_vecs,gt_refpath, candidate_mask, batch_dict):
     #     pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B,N,M->B, N  仅标志哪个agent是有效的，不标志refpath有效
@@ -107,7 +107,7 @@ class TrajDecoder(nn.Module):
         #可视化验证
         # self.vis_debug(candidate_refpaths_cords=candidate_refpaths_cords, candidate_refpaths_vecs=candidate_refpaths_vecs,gt_refpath=gt_refpath,candidate_mask=candidate_mask,batch_dict=batch_dict)
         B, N, M, _, _ = candidate_refpaths_vecs.shape 
-        gt_idx = (torch.argmax(gt_refpath, dim=-1)*3+gt_vel_mode - 1) # BNM->BN-> *3+- ->BN (为-1的值)
+        gt_idx = (torch.argmax(gt_refpath, dim=-1)*3+gt_vel_mode - 1) # BNM->BN-> *3+- ->BN (gt_refpath全零则gt_idx对应为-1，后续算loss会无视)
         batch_indices = torch.arange(B).unsqueeze(1).expand(B, N)  # 生成 [B, N] 形状的批次索引
         sequence_indices = torch.arange(N).unsqueeze(0).expand(B, N)  # 生成 [B, N] 形状的序列索引
         all_gt_refpath = torch.zeros(B,N,3*M) # B,N,3M
@@ -123,9 +123,12 @@ class TrajDecoder(nn.Module):
         cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
 
         # [B,N,M, D + 64+ embed]   *  3
-        accelerate_combined = torch.cat([feats_cand, self.accelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        constant_speed_combined = torch.cat([feats_cand, self.constant_speed_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        decelerate_combined = torch.cat([feats_cand, self.decelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
+        # accelerate_combined = torch.cat([feats_cand, self.accelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
+        # constant_speed_combined = torch.cat([feats_cand, self.constant_speed_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
+        # decelerate_combined = torch.cat([feats_cand, self.decelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
+        accelerate_combined = feats_cand.clone()
+        constant_speed_combined = feats_cand.clone()
+        decelerate_combined = feats_cand.clone()
         
         # 2. 根据refpath生成traj
         # B,N,3*M, D + 64+ embed  

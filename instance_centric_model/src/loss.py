@@ -18,8 +18,8 @@ class Loss(nn.Module):
     
     def forward(self, input_dict, output_dict, epoch=1):
         loss = 0.0
-        candidate_mask = input_dict['candidate_mask'] # B,N,M
-        all_candidate_mask = output_dict['all_candidate_mask'] # B,N,3M
+        candidate_mask = input_dict['candidate_mask'].cuda() # B,N,M
+        all_candidate_mask = output_dict['all_candidate_mask'].cuda() # B,N,3M
         pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B, N  
 
         s_candidate_mask = candidate_mask[pred_mask].cuda() # B,N,M+ B,N -> S, M
