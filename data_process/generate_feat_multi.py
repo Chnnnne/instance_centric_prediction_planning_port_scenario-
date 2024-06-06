@@ -286,7 +286,7 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
         agt_traj_fut_all = np.column_stack((agent_info['x'][cur_index+1:].copy(), agent_info['y'][cur_index+1:].copy())).astype(np.float32)
         # 计算该agent未来5s的加减速行为
         distances = np.sqrt(np.sum(np.diff(agt_traj_fut, axis=0)**2, axis=1))
-        cumulative_distance = np.cumsum(distances)[-1]  # 在开始插入0，表示从起点开始
+        cumulative_distance = np.cumsum(distances)[-1]  # 真实轨迹在5s的累计距离
         obs_v = agent_info['vel'][cur_index]
         vel_mode = 2
         if obs_v * 5 + 5 < cumulative_distance:
@@ -680,7 +680,7 @@ def load_seq_save_features(index):
 
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
-        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts,  candidate_mask = generate_future_feats_path(data_info, target_ids)
+        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
         # gt_preds: target_n, 50, 2真实轨迹
         # path_candidate: target_n, max-N,20（固定20）,2*3+2*3
         # gt_candts: target_n, max-N 标记哪一个是真值candidate path，后面的path打分模块要算cross entropy loss

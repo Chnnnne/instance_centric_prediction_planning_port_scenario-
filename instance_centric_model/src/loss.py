@@ -19,8 +19,11 @@ class Loss(nn.Module):
     def forward(self, input_dict, output_dict, epoch=1):
         loss = 0.0
         candidate_mask = input_dict['candidate_mask'] # B,N,M
-        pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B,N,M->B, N  仅标志哪个agent是有效的，不标志refpath有效
-        s_candidate_mask = candidate_mask[pred_mask].cuda() # S, M
+        all_candidate_mask = output_dict['all_candidate_mask'] # B,N,3M
+        pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B, N  
+
+        s_candidate_mask = candidate_mask[pred_mask].cuda() # B,N,M+ B,N -> S, M
+        s_all_candidate_mask = all_candidate_mask[pred_mask].cuda() # B,N,3M + B,N -> S,3M
         # 1、ref path cls loss
         gt_probs = input_dict['gt_candts'].float().cuda() # B, N, M     
 
@@ -55,27 +58,28 @@ class Loss(nn.Module):
         
         # 3、score_loss
         #由于要对 【模型对每条预测轨迹的打分器】 进行训练，因此我们就需要(打分器对每条轨迹的打分(其实是概率值))以及(真值)作为计算Loss的输入
-        pred_trajs = output_dict['trajs'][pred_mask] # B,N,M,50,2 -> S, M, 50, 2
+        pred_trajs = output_dict['trajs'][pred_mask] # B,N,3M,50,2 -> S, 3M, 50, 2
         S, m, horizon, dim = pred_trajs.shape
-        pred_trajs = pred_trajs.view(S, m , horizon*dim) # S,M, 100
+        pred_trajs = pred_trajs.view(S, m, horizon*dim) # S,3M, 100
         gt_trajs = gt_trajs.view(S, horizon*dim)# S, 50, 2 -> S, 100
         # score_gt = F.softmax(-self.distance_metric(pred_trajs,  gt_trajs)/self.temper, dim=-1).detach()# S,m
-        score_gt = self.masked_softmax(vector=-self.distance_metric(pred_trajs,  gt_trajs)/self.temper,mask=s_candidate_mask).detach()
-        score_loss = F.binary_cross_entropy(output_dict['traj_probs'][pred_mask], score_gt, reduction='sum')/pred_num  # S M   model输出的traj_probs对于mask数据已调整为0，score_gt对mask的数据也也做处理，因此此处可直接算BCE
+        score_gt = self.masked_softmax(vector=-self.distance_metric(pred_trajs,  gt_trajs)/self.temper, mask=s_all_candidate_mask).detach() # S,3m  + S,3m
+        score_loss = F.binary_cross_entropy(output_dict['traj_probs'][pred_mask], score_gt, reduction='sum')/pred_num  # S,3M + S,3M   model输出的traj_probs对于mask数据已调整为0，score_gt对mask的数据也也做处理，因此此处可直接算BCE
 
         
+        # if True:
         if epoch > 10:
-            pred_trajs_t = pred_trajs.view(S, m, horizon, dim) #S,M,50,2
+            pred_trajs_t = pred_trajs.view(S, m, horizon, dim) #S,3M,50,2
             plan_traj = input_dict["plan_feat"].cuda()[pred_mask][:, :, :2] # S, 50, 2
             plan_traj_mask = input_dict['plan_mask'].cuda()[pred_mask].bool() # S, 50
   
-            distances = torch.sqrt(torch.sum((pred_trajs_t - plan_traj.unsqueeze(1))**2, dim=-1)) # S, m, 50
-            masked_distances = distances.masked_fill(~plan_traj_mask.unsqueeze(1), 1000) # S, m, 50
-            min_distances = torch.min(masked_distances, dim=2)[0] # S, m
+            distances = torch.sqrt(torch.sum((pred_trajs_t - plan_traj.unsqueeze(1))**2, dim=-1)) # S, 3m, 50
+            masked_distances = distances.masked_fill(~plan_traj_mask.unsqueeze(1), 1000) # S, 3m, 50 + S,1,50(mask) ->S, 3m, 50 
+            min_distances = torch.min(masked_distances, dim=2)[0] # S, 3m
 
-            w_min_distances = output_dict['traj_probs'][pred_mask] * min_distances  # S, m
-            min_distances_sum = torch.sum(w_min_distances, dim=-1)
-            min_distances_sum = torch.clamp(min_distances_sum, max=self.d_safe)
+            w_min_distances = output_dict['traj_probs'][pred_mask] * min_distances  # S,3m * S,3m 
+            min_distances_sum = torch.sum(w_min_distances, dim=-1) # S
+            min_distances_sum = torch.clamp(min_distances_sum, max=self.d_safe)# S
             safety_loss = -torch.mean(min_distances_sum)
 
             loss = self.lambda1 * (cls_loss + 0) + self.lambda2 * reg_loss + self.lambda3 * score_loss + self.lambda4 * safety_loss
@@ -171,6 +175,7 @@ class Loss(nn.Module):
         """
         # S,m, 100
         # S,100
+        # return S, M
         compute the distance between the candidate trajectories and gt trajectory
         :param traj_candidate: torch.Tensor, [batch_size, M, horizon * 2] or [M, horizon * 2]
         :param traj_gt: torch.Tensor, [batch_size, horizon * 2] or [1, horizon * 2]

@@ -119,28 +119,34 @@ class Model(nn.Module):
         agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # agent_feats [b,all_n-Max, d_agent]
         
         plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool() # B,N,50,4   B,N,50
-        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # ??用未来的信息来融合特征？
+        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # 
         
         candidate_refpaths_cords, candidate_refpaths_vecs, candidate_mask = batch_dict['candidate_refpaths_cords'].cuda(), batch_dict['candidate_refpaths_vecs'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
-        target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
-        target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
+        # target_gt = batch_dict['gt_preds'][:, :, -1, :2].cuda() # [b, all_n-Max, 2]
+        # target_gt = target_gt.view(target_gt.shape[0], target_gt.shape[1], 1, 2) # [b, all_n-Max, 1, 2]
         gt_refpath = batch_dict['gt_candts'] # [b, all_n-Max, Max-N-Max]
-        cand_refpath_probs, param, traj_probs, param_with_gt = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, candidate_mask,batch_dict)
+        gt_vel_mode = batch_dict['gt_vel_mode'] # [b, all_n-Max]
+        cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, gt_vel_mode, candidate_mask)
         # 由贝塞尔控制点反推轨迹
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
-                                           param.shape[2], -1, 2) # # B,N,M,n_order*2 -> B, N, m, n_order+1, 2
-        trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,m,future_steps,2
+                                           param.shape[2], -1, 2) # # B,N,3M,n_order*2 -> B, N, 3m, n_order+1, 2
+        trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,3m,future_steps,2
         
         bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
                                                            param_with_gt.shape[1],
                                                            param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1*2 ->B, N, 1, n_order+1, 2
         traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
 
+
+
+        # self.plan_decoder(agent_feats, candidate_refpaths_cords, )# 目标是输出自车的规划轨迹，我们需要给它提供自己的意图（也即一两个候选path）（根据5s点位于的坐标，来得到候选path）我们有了候选path，1.不用打分2.生成3条轨迹， 3.traj打分然后
+
         return {"cand_refpath_probs": cand_refpath_probs, # B,N,M
                 "traj_with_gt": traj_with_gt,#B,N,1,50,2
-                "trajs": trajs, # B,N,M,50,2
-                "traj_probs": traj_probs # B,N,M
+                "trajs": trajs, # B,N,3M,50,2
+                "traj_probs": traj_probs, # B,N,3M
+                "all_candidate_mask":all_candidate_mask # B,N,3M
                }  
         
     def _get_T_matrix_bezier(self, n_order, n_step):
@@ -215,10 +221,10 @@ class Model(nn.Module):
      
 
         # 计算轨迹有关的指标
-        score = output_dict['traj_probs'][pred_mask] # B, N, M -> S, M
+        score = output_dict['traj_probs'][pred_mask] # B, N, 3M -> S, 3M
         traj_max_probs, traj_max_indices = torch.max(score, dim=1) # S
-        trajs = output_dict['trajs'][pred_mask] # B, N, M, 50, 2 -> S, M, 50, 2
-        traj_pred = trajs[torch.arange(batch_size), traj_max_indices] # S, 50, 2
+        trajs = output_dict['trajs'][pred_mask] # B, N, 3M, 50, 2 -> S, 3M, 50, 2
+        traj_pred = trajs[torch.arange(batch_size), traj_max_indices] # S, 50, 2 得到得分最高的轨迹和真值计算指标
         # traj_pred = trajs[torch.arange(batch_size), traj_max_indices].view(batch_size, 50, 2) 
         traj_gt = input_dict["gt_preds"].cuda()[pred_mask]# B N 50 2 -> S 50 2
         

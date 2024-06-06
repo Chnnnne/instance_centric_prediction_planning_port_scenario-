@@ -22,12 +22,18 @@ class InterDataSet(Dataset):
     def __getitem__(self, i):
         data_path = os.path.join(self.data_root, self.ids[i])
         with open(data_path, "rb") as f:
-            data_dict = pickle.load(f)
+            try:
+                data_dict = pickle.load(f)
+            except:
+                bak_up_file_path = "/private/wangchen/instance_model/instance_model_data_new_version/test/howo25_1692182507.8921573.pkl"
+                with open(bak_up_file_path, "rb") as b:
+                    data_dict = pickle.load(b)
         return data_dict
     
     def collate_batch(self, batch_list):
         '''
-        key_to_list['candidate_refpaths_cords'] = [sample-1 pad_candidate_refpaths_cords (all_n, max-N, 20,2), sample=2 pad_candidate_refpaths_cords, ...]
+        将一个list的samples合成
+        key_to_list['candidate_refpaths_cords'] = [sample-1 pad_candidate_refpaths_cords (all_n, max-N, 20,2)  , sample=2 pad_candidate_refpaths_cords, ...]
         '''
         batch_size = len(batch_list)
         key_to_list = {}
@@ -38,7 +44,7 @@ class InterDataSet(Dataset):
         for key, val_list in key_to_list.items():
             val_list = [torch.from_numpy(x) for x in val_list]
             if key in ['agent_feats', 'agent_mask', 'agent_ctrs', 'agent_vecs', 'gt_preds',
-                       'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask']:
+                       'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask', 'gt_vel_mode']:
                 input_dict[key] = self.merge_batch_1d(val_list)
             elif key in ['candidate_mask', 'gt_candts', 'rpe', 'rpe_mask']:
                 input_dict[key] = self.merge_batch_2d(val_list)
@@ -61,11 +67,17 @@ class InterDataSet(Dataset):
         return input_dict
                 
     def merge_batch_1d(self, tensor_list):# agent feats:list[all_n,20,13]      agent mask: list[all_n,20]
-        assert len(tensor_list[0].shape) in [2, 3]
+        assert len(tensor_list[0].shape) in [1,2, 3]
         only_2d_tensor = False
         if len(tensor_list[0].shape) == 2:
             tensor_list = [x.unsqueeze(dim=-1) for x in tensor_list] # [alln,20] -> [alln,20,1]      [bs,alln,20,1]
             only_2d_tensor = True
+
+        only_1d_tensor = False
+        if len(tensor_list[0].shape) == 1: # gt_vel_mode [all_n]
+            tensor_list = [x.unsqueeze(dim=-1).unsqueeze(dim=-1) for x in tensor_list] # [all_n, 1, 1]
+            only_1d_tensor = True
+
         tensor_list = [x.unsqueeze(dim=0) for x in tensor_list] #list[1, all_n,20,13]
         max_feat0 = max([x.shape[1] for x in tensor_list]) # all_n-Max
         _, _, num_feat1, num_feat2 = tensor_list[0].shape # [20,13]
@@ -81,6 +93,8 @@ class InterDataSet(Dataset):
         ret_tensor = torch.cat(ret_tensor_list, dim=0)  # [bs, all_n-Max,20,13]
         if only_2d_tensor:
             ret_tensor = ret_tensor.squeeze(dim=-1)
+        if only_1d_tensor:
+            ret_tensor = ret_tensor.squeeze(dim=-1).squeeze(dim=-1)
         return ret_tensor
     
     def merge_batch_2d_more(self, tensor_list):
