@@ -32,25 +32,7 @@ class Loss(nn.Module):
         pred_num = pred_probs.shape[0] # S
         cls_loss = F.binary_cross_entropy(pred_probs, gt_probs, reduction='sum')/pred_num  # 对于被mask的数据项，根据BSE定义，得单项loss为0，因此此处的loss无需再做mask
         
-        # gt_tar_offset = input_dict["gt_tar_offset"].cuda() # B, N ,2
-        # try:
-        #     gt_tar_offset = gt_tar_offset[pred_mask] # S, 2
-        # except Exception as e:
-        #     print('产生错误了:',e)
-        #     print(f"pred_mask.shape: {pred_mask.shape}")
-        #     print(f"gt_tar_offset: {gt_tar_offset.shape}")
-        #     print("pred_mask:")
-        #     print(pred_mask)
-        #     print(torch.isfinite(gt_tar_offset))
-        #     print(torch.isnan(gt_tar_offset))
-        #     print("gt_tar_offset:")
-        #     print(gt_tar_offset)
 
-        # gt_idx = gt_probs.nonzero()[:pred_num] 
-        # pred_offsets = output_dict['pred_offsets'][pred_mask] # S, M, 2
-        # pred_offsets = pred_offsets[gt_idx[:, 0], gt_idx[:, 1]] # S, 2
-        # offset_loss = F.smooth_l1_loss(pred_offsets, gt_tar_offset, reduction='sum')/pred_num # 只算所有候选中离gt最近的候选tar point的gt offset和预测出来的改哦point的offset算loss
-        
         # 2、motion reg loss
         traj_with_gt = output_dict['traj_with_gt'].squeeze(2)[pred_mask] #B,N,1,50,2 -> B,N,50,2-> S, 50, 2
         gt_trajs = input_dict['gt_preds'].cuda()[pred_mask] #B,N,50,2 -> S, 50, 2
@@ -62,11 +44,33 @@ class Loss(nn.Module):
         S, m, horizon, dim = pred_trajs.shape
         pred_trajs = pred_trajs.view(S, m, horizon*dim) # S,3M, 100
         gt_trajs = gt_trajs.view(S, horizon*dim)# S, 50, 2 -> S, 100
-        # score_gt = F.softmax(-self.distance_metric(pred_trajs,  gt_trajs)/self.temper, dim=-1).detach()# S,m
         score_gt = self.masked_softmax(vector=-self.distance_metric(pred_trajs,  gt_trajs)/self.temper, mask=s_all_candidate_mask).detach() # S,3m  + S,3m
         score_loss = F.binary_cross_entropy(output_dict['traj_probs'][pred_mask], score_gt, reduction='sum')/pred_num  # S,3M + S,3M   model输出的traj_probs对于mask数据已调整为0，score_gt对mask的数据也也做处理，因此此处可直接算BCE
 
-        
+        # 4. planning_loss
+        # 4.1 planning traj reg loss
+        B, _, _ = input_dict['ego_gt_traj'].shape
+        plan_traj_with_gt = output_dict['plan_traj_with_gt']# B, 50, 2
+        ego_gt_traj = input_dict['ego_gt_traj'].cuda() # B, 50, 2
+        plan_reg_loss = F.smooth_l1_loss(plan_traj_with_gt, ego_gt_traj, reduction="sum")/B
+
+        # 4.2 planning traj prob loss
+        plan_pred_trajs = output_dict['plan_trajs'].view(B,3,horizon*dim) # B,3,50,2 -> B,3,100
+        ego_gt_traj = ego_gt_traj.view(B, horizon*dim)# B,100
+        plan_score_gt = F.softmax(-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper, dim=-1).detach() # B,3,100 + B,100 -> B,3 -> B,3
+        plan_score_loss = F.binary_cross_entropy(output_dict['plan_traj_probs'], plan_score_gt, reduction='sum')/B # B, 3 + B, 3
+
+        # irl loss
+        # scores B3    weight B8
+        # 算出3条traj中跟真值最接近的那条idx，维度B, 然后计算
+        scores, weights = output_dict['scores'], output_dict['weights']
+        min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device)) # B,3,50,2   B,50,2->B
+        irl_loss = F.cross_entropy(scores, min_idx)
+        # irl_loss = torch.tensor(0).cuda()
+        weights_regularization = torch.square(weights).mean()
+        # weights_regularization = torch.tensor(0).cuda()
+
+
         # if True:
         if epoch > 10:
             pred_trajs_t = pred_trajs.view(S, m, horizon, dim) #S,3M,50,2
@@ -82,19 +86,29 @@ class Loss(nn.Module):
             min_distances_sum = torch.clamp(min_distances_sum, max=self.d_safe)# S
             safety_loss = -torch.mean(min_distances_sum)
 
-            loss = self.lambda1 * (cls_loss + 0) + self.lambda2 * reg_loss + self.lambda3 * score_loss + self.lambda4 * safety_loss
+            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss + self.lambda4 * safety_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss+ irl_loss + weights_regularization
+            loss = irl_loss +weights_regularization
             loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
-                        #  "tar_offset_loss": self.lambda1*offset_loss,
                          "traj_loss": self.lambda2*reg_loss,
                          "score_loss": self.lambda3*score_loss,
-                         "safety_loss": self.lambda4 * safety_loss
-                        }
+                         "safety_loss": self.lambda4 * safety_loss,
+                         "plan_reg_loss": self.lambda2*plan_reg_loss,
+                         "plan_score_loss": self.lambda3*plan_score_loss,
+                         "irl_loss": irl_loss,
+                         "weights_regularization": weights_regularization
+                         }
         else:
-            loss = self.lambda1 * (cls_loss + 0) + self.lambda2 * reg_loss + self.lambda3 * score_loss
+            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + irl_loss + weights_regularization
+
+            loss = irl_loss + weights_regularization
             loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
-                        #  "tar_offset_loss": self.lambda1*offset_loss,
                          "traj_loss": self.lambda2*reg_loss,
-                         "score_loss": self.lambda3*score_loss}
+                         "score_loss": self.lambda3*score_loss,
+                         "plan_reg_loss": self.lambda2*plan_reg_loss,
+                         "plan_score_loss": self.lambda3*plan_score_loss,
+                         "irl_loss": irl_loss,
+                         "weights_regularization": weights_regularization
+                         }
         return loss, loss_dict
     
     # def forward(self, input_dict, output_dict, epoch=1):
@@ -169,7 +183,19 @@ class Loss(nn.Module):
     #                      "traj_loss": self.lambda2*reg_loss,
     #                      "score_loss": self.lambda3*score_loss}
     #     return loss, loss_dict
-    
+    def get_closest_traj_idx(self, plan_trajs, gt_trajs):
+        '''
+        - plan_trajs: B,3,50,2   
+        - gt_trajs: B,50,2
+        '''
+        B,_,T,_ = plan_trajs.shape
+        dists = torch.norm(plan_trajs - gt_trajs[:,None,:,:], dim=-1) # B,3,50,2 -》 B,3,50 
+        dists = torch.linspace(0.5,1.5, T,device=dists.device) * dists
+        min_idx = torch.argmin(dists.sum(-1),dim=-1) # B
+        return min_idx
+
+
+
      
     def distance_metric(self, traj_candidate: torch.Tensor, traj_gt: torch.Tensor):
         """

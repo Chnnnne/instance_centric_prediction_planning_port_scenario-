@@ -1,8 +1,9 @@
 import argparse
 import torch
-import os
+import os,sys
 import yaml
 from utils import str2bool
+
 
 # 训练使用的parser
 def get_parser():
@@ -15,13 +16,13 @@ def get_parser():
         '--model_name', '-mn', default='MODEL', type=str,
         choices=['MODEL'], help='Type of architecture to use')
     # parser.add_argument(
-    #     '--dataset_dir', '-dd', default=f'/private/wanggang/instance_model_data/', type=str,
+    #     '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data/', type=str,
     #     help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data_add_ego/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=16, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=2, type=int, help='number of batch size')
     parser.add_argument(
         '--workers', type=int, default=32, help='number of workers for dataloader')
     parser.add_argument(
@@ -48,14 +49,19 @@ def get_parser():
              'pre-trained model')
     parser.add_argument(
         '--num_epochs', '-ne', default=50, type=int, help='number of epochs to train for')
+    # parser.add_argument(
+    #     '--load_checkpoint', '-lc', default=None, type=str,
+    #     help="Load pre-trained model for testing or resume training. Specify "
+    #          "the epoch to load or 'best' to load the best model. Default=None "
+    #          "means do not load any model.")
     parser.add_argument(
-        '--load_checkpoint', '-lc', default=None, type=str,
-        help="Load pre-trained model for testing or resume training. Specify "
-             "the epoch to load or 'best' to load the best model. Default=None "
-             "means do not load any model.")
+    '--load_checkpoint', '-lc', default="/data/wangchen/instance_centric/instance_centric_model/output/MODEL/2024-06-18 16:37:42_ front part/saved_models/MODEL_best_model.pt", type=str,
+    help="Load pre-trained model for testing or resume training. Specify "
+            "the epoch to load or 'best' to load the best model. Default=None "
+            "means do not load any model.")
        
     parser.add_argument(
-        '--save_every', '-se', default=10, type=int,
+        '--save_every', '-se', default=5, type=int,
         help="Save model weights and outputs every save_every epochs.")
     
     parser.add_argument(
@@ -70,7 +76,7 @@ def get_parser():
     # Deep Learning strategies
     ##############################################################
     parser.add_argument(
-        '--learning_rate', '-lr', default=1e-3, type=float)
+        '--learning_rate', '-lr', default=5e-4, type=float)
     parser.add_argument(
         '--weight_decay', '-wd', default=0.01, type=float)
     parser.add_argument(
@@ -104,6 +110,8 @@ def get_parser():
     parser.add_argument(
         '--decoder_hidden_size', default=64, type=int)
     parser.add_argument(
+        "--refpath_dim", default=64, type=int)
+    parser.add_argument(
         '--bezier_order', default=7, type=int)
     parser.add_argument(
         '--dropout', default=0.1, type=float)
@@ -134,13 +142,17 @@ def check_and_add_additional_args(args):
         args.device = 'cpu'
         args.use_cuda = False
         
+    parent_dir = "/data/wangchen/instance_centric/"
+    sys.path.append(parent_dir)
+    import common.time_utils as time_utils
     # 定义各种保存路径
     args.base_dir = '.'          
     args.save_base_dir = 'output' # 用于保存输出和模型来的目录
-    args.save_dir = os.path.join(args.base_dir, args.save_base_dir)
-    args.model_dir = os.path.join(args.save_dir, args.model_name)
-    args.log_dir = os.path.join(args.save_dir, 'log')
-    args.tensorboard_dir = os.path.join(args.save_dir, 'tensorboard')
+    args.save_dir = os.path.join(args.base_dir, args.save_base_dir) # output
+    base_time = time_utils.get_cur_time_string()
+    args.model_dir = os.path.join(args.save_dir, args.model_name, base_time) # output/MODEL
+    args.log_dir = os.path.join(args.save_dir, 'log', base_time) # output/log
+    args.tensorboard_dir = os.path.join(args.save_dir, 'tensorboard', base_time) # output/tensorboard
     args.config = os.path.join(args.save_dir, 'config_' + args.model_name + '.yaml')
     return args
     

@@ -37,30 +37,31 @@ class PolylineNet(nn.Module):
     def forward(self, polylines, polylines_mask):
         """
         Args:
-            polylines (batch_size, num_polylines, num_points_each_polylines, C):
-            polylines_mask (batch_size, num_polylines, num_points_each_polylines):
+            polylines (batch_size, num_polylines, num_points_each_polylines, C): B,N,20,13
+            polylines_mask (batch_size, num_polylines, num_points_each_polylines): B,N,20
 
         Returns:
+            B,N,D
         """
         bs, poly_num, point_num, C = polylines.shape
-        poly_feat_valid = self.fc1(polylines[polylines_mask])  # (N, C)
-        poly_feat = polylines.new_zeros(bs, poly_num, point_num, poly_feat_valid.shape[-1])
-        poly_feat[polylines_mask] = poly_feat_valid
+        poly_feat_valid = self.fc1(polylines[polylines_mask])  # (N, C)   (B,N,20,13)->(S,13)->(S,d_model)
+        poly_feat = polylines.new_zeros(bs, poly_num, point_num, poly_feat_valid.shape[-1])# B,N,20,d_model
+        poly_feat[polylines_mask] = poly_feat_valid 
         
         # get global feature
-        pooled_feat = poly_feat.max(dim=2)[0]
-        poly_feat = torch.cat((poly_feat, pooled_feat[:, :, None, :].repeat(1, 1, point_num, 1)), dim=-1)
+        pooled_feat = poly_feat.max(dim=2)[0] # B,N,d_model  
+        poly_feat = torch.cat((poly_feat, pooled_feat[:, :, None, :].repeat(1, 1, point_num, 1)), dim=-1) # B,N,20,d_model + B,N,20,d_model
         # mlp
-        poly_feat_valid = self.fc2(poly_feat[polylines_mask])
-        feat_buffers = poly_feat.new_zeros(bs, poly_num, point_num, poly_feat_valid.shape[-1])
+        poly_feat_valid = self.fc2(poly_feat[polylines_mask]) # B,N,20,2d-> S,2d->S,d
+        feat_buffers = poly_feat.new_zeros(bs, poly_num, point_num, poly_feat_valid.shape[-1])# B,N,20,d
         feat_buffers[polylines_mask] = poly_feat_valid
         # max-pooling
-        feat_buffers = feat_buffers.max(dim=2)[0]  # (batch_size, num_polylines, C)
+        feat_buffers = feat_buffers.max(dim=2)[0]  # (batch_size, num_polylines, C)  BNd
         
         # out-mlp 
         if self.fc_out is not None:
-            valid_mask = (polylines_mask.sum(dim=-1) > 0)
-            feat_buffers_valid = self.fc_out(feat_buffers[valid_mask])  # (N, C)
-            feat_buffers = feat_buffers.new_zeros(bs, poly_num, feat_buffers_valid.shape[-1])
+            valid_mask = (polylines_mask.sum(dim=-1) > 0) # B,N
+            feat_buffers_valid = self.fc_out(feat_buffers[valid_mask])  # (N, C)     S,d->S, 128
+            feat_buffers = feat_buffers.new_zeros(bs, poly_num, feat_buffers_valid.shape[-1]) # B,N,128
             feat_buffers[valid_mask] = feat_buffers_valid
         return feat_buffers

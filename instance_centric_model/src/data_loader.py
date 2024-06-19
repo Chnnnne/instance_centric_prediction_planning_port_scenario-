@@ -12,9 +12,9 @@ class InterDataSet(Dataset):
         random.seed(777)
         random.shuffle(self.ids)
         if set_name=="train":
-            self.ids = self.ids[:50000]
+            self.ids = self.ids[:50]
         else:
-            self.ids = self.ids[:10000]
+            self.ids = self.ids[:10]
         
     def __len__(self):
         return len(self.ids)
@@ -50,6 +50,8 @@ class InterDataSet(Dataset):
                 input_dict[key] = self.merge_batch_2d(val_list)
             elif key in ['candidate_refpaths_cords', 'candidate_refpaths_vecs']:
                 input_dict[key] = self.merge_batch_2d_more(val_list)
+            elif key in ['ego_vel_mode', 'ego_refpath_cords', 'ego_refpath_vecs',"ego_gt_traj"]:
+                input_dict[key] = torch.stack(val_list,dim=0) #(B,)
             else:
                 print(key)
                 continue

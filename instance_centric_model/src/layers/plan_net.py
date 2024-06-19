@@ -16,12 +16,13 @@ class PlanNet(nn.Module):
 
     def forward(self, agent_feats, plan_traj, plan_traj_mask):
         """
+        agent_feats: B,N,D
         plan_traj: B,N,d,2
         plan_traj_mask: B,N,d
         """
         batch_size, agent_num, _ = agent_feats.size() 
-        ego_feat = agent_feats[:, 0].unsqueeze(1).expand(-1, agent_num, -1)
-        gate_feat = torch.cat((agent_feats, ego_feat), dim=-1)
+        ego_feat = agent_feats[:, 0].unsqueeze(1).expand(-1, agent_num, -1) # BND->B1D->BND
+        gate_feat = torch.cat((agent_feats, ego_feat), dim=-1)# BND+BND ->B,N,2D
         gate = self.gate(gate_feat).squeeze(-1) # B*N
         
         if plan_traj.dim() == 3:

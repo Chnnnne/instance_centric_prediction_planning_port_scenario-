@@ -1,6 +1,7 @@
 import sys
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from tensorboardX import SummaryWriter
 import time
 import os
@@ -25,9 +26,10 @@ class Trainer(object):
         if not args.without_sync_bn:
             self.net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.net)
         torch.cuda.set_device(self.args.local_rank) 
+        self._load_or_restart()
         self.net = self.net.cuda()
         self.net = torch.nn.parallel.DistributedDataParallel(self.net, 
-                                                    device_ids=[self.args.local_rank])
+                                                    device_ids=[self.args.local_rank],find_unused_parameters=False)
         # find_unused_parameters=True
         
         self.optimizer = None
@@ -95,6 +97,55 @@ class Trainer(object):
             return None
 
 
+    def _load_checkpoint_for_step_train(self, load_checkpoint):
+        """
+        Load a pre-trained model. Can then be used to test or resume training.
+        """
+        if load_checkpoint is not None:
+            # Create load model path
+            # if load_checkpoint == 'best':
+            #     saved_model_name = os.path.join(
+            #         self.args.model_dir, 'saved_models',
+            #         self.args.model_name + '_best_model.pt')
+            # else:  # Load specific checkpoint
+            #     assert int(load_checkpoint) > 0, \
+            #         "Check args.load_model. Must be an integer > 0"
+            #     saved_model_name = os.path.join(
+            #         self.args.model_dir, 'saved_models',
+            #         self.args.model_name + '_epoch_' +
+            #         str(load_checkpoint).zfill(3) + '.pt')
+            print("\nSaved model path:", load_checkpoint)
+            # Load model（多进程需要放到cpu）
+            if os.path.isfile(load_checkpoint):
+                print('Loading checkpoint ...')
+                checkpoint = torch.load(load_checkpoint,
+                                         map_location=torch.device('cpu'))
+                model_epoch = checkpoint['epoch']
+                self.net.load_state_dict(
+                    checkpoint['model_state_dict'])
+                print('Loaded checkpoint at epoch', model_epoch, '\n')
+                for name, parameter in self.net.named_parameters():
+                    parameter.requires_grad = False
+                for module in self.net.modules():
+                    if isinstance(module, nn.BatchNorm1d):
+                        module.eval()  # 确保不更新内部统计数据
+                        module.weight.requires_grad = False
+                        module.bias.requires_grad = False
+                    elif isinstance(module, nn.LayerNorm):
+                        module.eval()  # 确保不更新内部统计数据
+                        module.weight.requires_grad = False
+                        module.bias.requires_grad = False
+                from .layers.score_decoder import ScoreDecoder
+                self.net.scorer = ScoreDecoder(n_order=self.args.bezier_order)
+                # return model_epoch
+                return 0
+            else:
+                raise ValueError("No such pre-trained model:", load_checkpoint)
+        else:
+            raise ValueError('You need to specify an epoch (int) if you want '
+                             'to load a model or "best" to load the best '
+                             'model! Check args.load_checkpoint')
+
     def _load_checkpoint(self, load_checkpoint):
         """
         Load a pre-trained model. Can then be used to test or resume training.
@@ -139,7 +190,7 @@ class Trainer(object):
         """
         # load pre-trained model to resume training
         if self.args.load_checkpoint is not None:
-            loaded_epoch = self._load_checkpoint(self.args.load_checkpoint)
+            loaded_epoch = self._load_checkpoint_for_step_train(self.args.load_checkpoint)
             # start from the following epoch
             start_epoch = int(loaded_epoch) + 1
         else:
@@ -170,7 +221,8 @@ class Trainer(object):
     
     def train(self):
         # 判断加载已有模型还是重新训练
-        start_epoch = self._load_or_restart()
+        start_epoch = 1
+        # start_epoch = self._load_or_restart()
         if self.args.local_rank==0:
             # 输出模型的参数信息
             print_model_summary(self.net, self.args.model_name)
@@ -235,7 +287,7 @@ class Trainer(object):
     def _train_epoch(self, epoch):
         self.net.train()
         # losses_epoch = {"loss":0, "tar_cls_loss": 0, "tar_offset_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0}
-        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0}
+        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "safety_loss": 0, "plan_reg_loss":0, "plan_score_loss":0,"irl_loss":0,"weights_regularization":0}
         # total_it_each_epoch = int(0.1*len(self.data_loaders['train']))
         total_it_each_epoch = len(self.data_loaders['train'])
         dataloader_iter = iter(self.data_loaders['train'])
@@ -254,13 +306,18 @@ class Trainer(object):
 
                 losses_epoch["loss"] += loss.detach().item()
                 losses_epoch["ref_cls_loss"] += loss_dict["ref_cls_loss"].detach().item()
-                # losses_epoch["tar_offset_loss"] += loss_dict["tar_offset_loss"].detach().item()
                 losses_epoch["traj_loss"] += loss_dict["traj_loss"].detach().item()
                 losses_epoch["score_loss"] += loss_dict["score_loss"].detach().item()
                 if "safety_loss" in loss_dict:
                     losses_epoch["safety_loss"] += loss_dict["safety_loss"].detach().item()
+                losses_epoch["plan_reg_loss"] += loss_dict["plan_reg_loss"].detach().item()
+                losses_epoch["plan_score_loss"] += loss_dict["plan_score_loss"].detach().item()
+                losses_epoch["irl_loss"] += loss_dict["irl_loss"].detach().item()
+                losses_epoch["weights_regularization"] += loss_dict["weights_regularization"].detach().item()
+
                 loss.backward()
                 # 暂时不适用梯度裁剪
+                # torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=1.0)
                 # torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.args.clip)
                 self.optimizer.step()
         if self.args.local_rank == 0:

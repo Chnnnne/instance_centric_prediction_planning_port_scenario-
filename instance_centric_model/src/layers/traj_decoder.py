@@ -4,33 +4,18 @@ import torch.nn.functional as F
 from .res_mlp import ResMLP
 
 class TrajDecoder(nn.Module):
-    def __init__(self, input_size, hidden_size, n_order=7, m=50, embed_dim = 0):
+    def __init__(self, input_size, hidden_size, n_order=7, m=50, refpath_dim = 64,embed_dim = 32):
         super().__init__()
         self.m = m
-        # self.taregt_prob_layer = nn.Sequential(
-        #     ResMLP(input_size + 2, hidden_size, hidden_size),
-        #     nn.Linear(hidden_size, 1)
-        # )
+
         self.cand_refpath_prob_layer = nn.Sequential(
-            ResMLP(input_size + 64, hidden_size, hidden_size),
+            ResMLP(input_size + refpath_dim, hidden_size, hidden_size),# 128+64
             nn.Linear(hidden_size, 1)
         )
-        # self.target_offset_layer = nn.Sequential(
-        #     ResMLP(input_size + 2, hidden_size, hidden_size),
-        #     nn.Linear(hidden_size, 2)
-        # )
-        # self.motion_estimator_layer = nn.Sequential(
-        #     ResMLP(input_size + 2, hidden_size, hidden_size),
-        #     nn.Linear(hidden_size, (n_order+1)*2) # n阶贝塞尔曲线，有n+1个控制点
-        # )
-        self.refpath_encoder = nn.Sequential(
-            ResMLP(20*2+20*2, hidden_size,hidden_size),
-            nn.Linear(hidden_size, 64)
 
-        )
 
         self.motion_estimator_layer = nn.Sequential(
-            ResMLP(input_size + 64 + embed_dim, hidden_size, hidden_size),
+            ResMLP(input_size + refpath_dim + embed_dim, hidden_size, hidden_size), # 128+64+32
             nn.Linear(hidden_size, (n_order+1)*2) # n阶贝塞尔曲线，有n+1个控制点
         )
         
@@ -41,10 +26,11 @@ class TrajDecoder(nn.Module):
         )
 
         # 可学习的速度嵌入向量
+        self.vel_emb = nn.Parameter(torch.Tensor(1, 1, 3, embed_dim))
         # self.accelerate_embedding = nn.Parameter(torch.randn(1))# (32, )
         # self.constant_speed_embedding = nn.Parameter(torch.randn(1))
         # self.decelerate_embedding = nn.Parameter(torch.randn(1))
-
+    '''
     # def vis_debug(self, candidate_refpaths_cords,candidate_refpaths_vecs,gt_refpath, candidate_mask, batch_dict):
     #     pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B,N,M->B, N  仅标志哪个agent是有效的，不标志refpath有效
     #     idx_mask = candidate_mask.sum(dim=-1).cuda() # B,N,M->B, N  
@@ -84,9 +70,10 @@ class TrajDecoder(nn.Module):
     #     #     refpath_vecs = candidate_refpaths_vecs[idx]
     #     #     gt_ref = gt_refpath[idx]
     #     #     mask = candidate_mask[idx]
+    '''
 
 
-    def forward(self, feats, candidate_refpaths_cords, candidate_refpaths_vecs, gt_refpath, gt_vel_mode, candidate_mask=None):
+    def forward(self, feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask=None):
         """
         input:
             - feats: B,N,D                                                                         
@@ -106,7 +93,7 @@ class TrajDecoder(nn.Module):
         """
         #可视化验证
         # self.vis_debug(candidate_refpaths_cords=candidate_refpaths_cords, candidate_refpaths_vecs=candidate_refpaths_vecs,gt_refpath=gt_refpath,candidate_mask=candidate_mask,batch_dict=batch_dict)
-        B, N, M, _, _ = candidate_refpaths_vecs.shape 
+        B, N, M = gt_refpath.shape 
         gt_idx = (torch.argmax(gt_refpath, dim=-1)*3+gt_vel_mode - 1) # BNM->BN-> *3+- ->BN (gt_refpath全零则gt_idx对应为-1，后续算loss会无视)
         batch_indices = torch.arange(B).unsqueeze(1).expand(B, N)  # 生成 [B, N] 形状的批次索引
         sequence_indices = torch.arange(N).unsqueeze(0).expand(B, N)  # 生成 [B, N] 形状的序列索引
@@ -114,32 +101,33 @@ class TrajDecoder(nn.Module):
         all_gt_refpath[batch_indices, sequence_indices, gt_idx] = 1 # 标志速度embedding扩充之后的真值
         all_candidate_mask = candidate_mask.repeat_interleave(repeats=3, dim= -1) # B,N,M -> B,N,3M   标志速度embedding扩充之后的cand mask
 
-        refpaths_feat = self.refpath_encoder(torch.cat([candidate_refpaths_cords.reshape(B,N,M,-1), candidate_refpaths_vecs.reshape(B,N,M,-1)],dim=-1))# B,N,M,40 +40  ->B,N,M,64
-
-        feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1) # B, N, M, D
-        feats_cand = torch.cat([feats_repeat, refpaths_feat], dim=-1) # B,N,M, D+64
+        # refpath_feats = self.refpath_encoder(torch.cat([candidate_refpaths_cords.reshape(B,N,M,-1), candidate_refpaths_vecs.reshape(B,N,M,-1)],dim=-1))# B,N,M,40 +40  ->B,N,M,64
+        agent_feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1) # B, N, M, D
+        feats_cand = torch.cat([agent_feats_repeat, refpath_feats], dim=-1) # B,N,M, D+64
         # 1. refpath打分
-        prob_tensor = self.cand_refpath_prob_layer(feats_cand).squeeze(-1) # B,N,M, D+64 -> B,N,M 很多空的D 4040送入预测器
+        prob_tensor = self.cand_refpath_prob_layer(feats_cand).squeeze(-1) # B,N,M, D+64 -> B,N,M 
         cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
 
         # [B,N,M, D + 64+ embed]   *  3
         # accelerate_combined = torch.cat([feats_cand, self.accelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
         # constant_speed_combined = torch.cat([feats_cand, self.constant_speed_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
         # decelerate_combined = torch.cat([feats_cand, self.decelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        accelerate_combined = feats_cand.clone()
-        constant_speed_combined = feats_cand.clone()
-        decelerate_combined = feats_cand.clone()
+        # accelerate_combined = feats_cand.clone() # B,N,M,D+64
+        # constant_speed_combined = feats_cand.clone()
+        # decelerate_combined = feats_cand.clone()
         
         # 2. 根据refpath生成traj
-        # B,N,3*M, D + 64+ embed  
-        param_input = torch.cat([accelerate_combined,constant_speed_combined,decelerate_combined], dim=2)
+        param_input = torch.cat([feats_cand.repeat_interleave(repeats=3,dim=2),self.vel_emb.repeat(B,N,M,1)], dim=-1)# B,N,3m,D+64+emd_dim
+        # param_input = torch.cat([accelerate_combined,constant_speed_combined,decelerate_combined], dim=2)
+        # param_input = feats_cand # BNM, D+64
         param = self.motion_estimator_layer(param_input) # B,N,3M,(n_order+1)*2 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
 
 
         # 3. 给traj打分
-        prob_input = torch.cat([feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + (n_order+1)*2
+        prob_input = torch.cat([agent_feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + (n_order+1)*2
         traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, 3M   打分 空的parm和特征数据也会打分，做了softmax但没做mask，因此没mask的位置也会有概率评分
         traj_probs = self.masked_softmax(traj_prob_tensor, all_candidate_mask, dim = -1) # B,N,3M + B,N,3M
+ 
         
         # 预测轨迹(teacher_force)
         param_with_gt = param[all_gt_refpath==1].unsqueeze(1).reshape(B,N,1,-1) #  B,N,3M,(n_order+1)*2 -> [B*N, (n_order+1)*2] -> [B,N,1,(n_order+1)*2]
@@ -148,6 +136,9 @@ class TrajDecoder(nn.Module):
 
         # param_with_gt = torch.gather(param, dim=2, index=gt_idx)#    # B,N,3M,(n_order+1)*2     -> B, N, 1, (n_order+1)*2    
         
+
+
+
         return cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask
     
     def forward_origin(self, feats, tar_candidate, target_gt, candidate_mask=None):
