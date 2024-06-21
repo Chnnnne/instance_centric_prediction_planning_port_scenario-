@@ -259,6 +259,52 @@ def generate_future_feats(data_info: dict, target_ids: list):
         candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
     return tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask
 
+def generate_ego_future_feats(ego_info: dict, cur_index: list):
+    '''
+        - ego_refpath_cords:(20, 2)  ndarray
+        - ego_refpath_vecs: (20, 2)  ndarray
+        - ego_vel_mode:  int
+        - ego_gt_traj: (50,2)
+    '''
+    center_xy = np.array([ego_info['x'][cur_index], ego_info['y'][cur_index]])
+    center_heading = ego_info['vel_yaw'][cur_index]
+    ego_traj_fut_5s = np.column_stack((ego_info['x'][cur_index+1:cur_index+51].copy(), ego_info['y'][cur_index+1:cur_index+51].copy())).astype(np.float32)
+    ego_traj_fut_5s = transform_to_local_coords(ego_traj_fut_5s, center_xy, center_heading)
+    ego_traj_fut_15s = np.column_stack((ego_info['x'][cur_index+1:cur_index+151].copy(), ego_info['y'][cur_index+1:cur_index+151].copy())).astype(np.float32)
+    distances = np.sqrt(np.sum(np.diff(ego_traj_fut_5s, axis=0)**2, axis=1))
+    cumulative_distance = np.cumsum(distances)[-1]  # 真实轨迹在5s的累计距离
+    ego_v = ego_info['vel'][cur_index]
+    ego_vel_mode = 2
+    if ego_v * 5 + 5 < cumulative_distance:
+        ego_vel_mode = 1 # 加速
+    elif ego_v * 5 - 5 > cumulative_distance:
+        ego_vel_mode = 3 # 减速
+            # 采样目标点
+    ori = [ego_info['x'][cur_index], ego_info['y'][cur_index], 
+            ego_info['vel'][cur_index], ego_info['vel_yaw'][cur_index], 
+            ego_info['length'][cur_index], ego_info['width'][cur_index]]
+    candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+    if len(candidate_refpaths_cords) == 0:
+        return None, None, None, None
+    else:
+        gt_idx,_ = mp_seacher.get_candidate_gt_refpath_new(ego_traj_fut_15s,candidate_refpaths_cords, kd_trees)
+        if gt_idx == -1:
+            return None, None, None, None
+        else:
+            # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,fut_traj=ego_traj_fut_15s)
+            ego_refpath_cords = mp_seacher.sample_points(candidate_refpaths_cords[gt_idx], num=20, return_content="points")#(20,2)
+            ego_refpath_vecs = mp_seacher.get_refpath_vec([ego_refpath_cords])[0]
+            ego_refpath_cords = transform_to_local_coords(ego_refpath_cords, center_xy, center_heading)
+            ego_refpath_cords = np.asarray(ego_refpath_cords)
+            ego_refpath_vecs = np.asarray(ego_refpath_vecs)
+            ego_vel_mode = np.asarray(ego_vel_mode)
+            ego_gt_traj = np.asarray(ego_traj_fut_5s)
+
+            return ego_refpath_cords, ego_refpath_vecs, ego_vel_mode, ego_gt_traj
+
+
+    
+
 def generate_future_feats_path(data_info: dict, target_ids: list):
     '''
         n是target agent的个数， N是每个agent采样的refpath个数， Max-N是所有agent最大的refpath个数
@@ -667,7 +713,7 @@ def load_seq_save_features(index):
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    for i in range(19, frame_num-50, 30): # 10f间隔遍历ego的所有f obs:2s fut:5s
+    for i in range(19, frame_num-160, 20): # 10f间隔遍历ego的所有f obs:2s fut:5s
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
         if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
@@ -681,12 +727,9 @@ def load_seq_save_features(index):
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
         candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
-        # gt_preds: target_n, 50, 2真实轨迹
-        # path_candidate: target_n, max-N,20（固定20）,2*3+2*3
-        # gt_candts: target_n, max-N 标记哪一个是真值candidate path，后面的path打分模块要算cross entropy loss
-        # candidate_mask: target_n，max-N 由于每个target agent的采样path数量不一样，故作pad
+        ego_refpath_cords, ego_refpath_vecs, ego_vel_mode, ego_gt_traj = generate_ego_future_feats(ego_info, i)
         
-        if candidate_refpaths_cords is None:
+        if candidate_refpaths_cords is None or ego_refpath_cords is None:
             continue
         # 计算障碍物的历史特征
         agent_ids = [(-1, i)]
@@ -732,6 +775,11 @@ def load_seq_save_features(index):
         feat_data['agent_mask'] = agent_masks.astype(np.int32) # [all_n,20]
         
 
+        feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (20,2)
+        feat_data['ego_refpath_vecs'] = ego_refpath_vecs.astype(np.float32) # (20,2)
+        feat_data['ego_vel_mode'] = ego_vel_mode # (1, )
+        feat_data['ego_gt_traj'] = ego_gt_traj #(50,2)
+
         feat_data['candidate_refpaths_cords'] = pad_candidate_refpaths_cords.astype(np.float32)# all_n, max-N, 20,2
         feat_data['candidate_refpaths_vecs'] = pad_candidate_refpaths_vecs.astype(np.float32)# all_n, max-N, 20,2
         feat_data['gt_preds'] = pad_gt_preds.astype(np.float32)# all_n, 50,2
@@ -772,14 +820,12 @@ if __name__=="__main__":
     input_path = '/private2/wanggang/pre_log_inter_data'
     # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
-    all_file_list = all_file_list[:int(len(all_file_list)/5)]
+    all_file_list = all_file_list[:int(len(all_file_list)/1)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = train_files
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
-    time.sleep(2)
     
-    # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data_new_version/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
@@ -787,7 +833,7 @@ if __name__=="__main__":
     pool = multiprocessing.Pool(processes=16)
     pool.map(load_seq_save_features, range(len(cur_files)))
 
-    # for i in range(len(cur_files)): # 19 error 21 draw
+    # for i in range(1,len(cur_files)): # 19 error 21 draw
     #     print("--"*20, i)
     # #     # my_candidate_refpath_search_test(i)
     #     load_seq_save_features(i)

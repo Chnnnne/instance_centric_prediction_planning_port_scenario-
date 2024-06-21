@@ -177,7 +177,7 @@ class MapPointSeacher():
     def get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(self, ori):
         '''
             return 
-            - refpaths_cord  # list[(50,2),(50,2)...]    每个item对应一个mappath
+            - refpaths_cord  #  M,5x,2   list[(50,2),(50,2)...]    每个item对应一个mappath
             - map_paths
             - refpaths_dis  # list[one_ref_path_dis_list] 每个item对应一个mappath
             - kdtress 每条候选轨迹对应一个kd-trees方便进行后续计算点到候选的距离
@@ -513,7 +513,7 @@ class MapPointSeacher():
                 sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=30, end_dis=50, cumulative_distances=cumulative_distances)
             else:
                 print("gt轨迹在5-50m之间，取真实轨迹的后40%长度的点进行比较")
-                if agt_traj_fut_all.shape[0] < 4:
+                if agt_traj_fut_all.shape[0] < 7:
                     print("真值点过少")
                     return -1, [0]
                 # start_idx = int(len(agt_traj_fut_all) * 0.6)

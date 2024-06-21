@@ -49,13 +49,21 @@ def get_parser():
              'pre-trained model')
     parser.add_argument(
         '--num_epochs', '-ne', default=50, type=int, help='number of epochs to train for')
+    parser.add_argument('--train_part', '-tp', default="joint", type=str, help="front/back/joint")
+    
+    # train front part
     # parser.add_argument(
     #     '--load_checkpoint', '-lc', default=None, type=str,
     #     help="Load pre-trained model for testing or resume training. Specify "
     #          "the epoch to load or 'best' to load the best model. Default=None "
     #          "means do not load any model.")
+    # parser.add_argument(
+    # '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output_test/MODEL/2024-06-21 15:41:15_front/saved_models/MODEL_best_model.pt", type=str,
+    # help="Load pre-trained model for testing or resume training. Specify "
+    #         "the epoch to load or 'best' to load the best model. Default=None "
+    #         "means do not load any model.")
     parser.add_argument(
-    '--load_checkpoint', '-lc', default="/data/wangchen/instance_centric/instance_centric_model/output/MODEL/2024-06-18 16:37:42_ front part/saved_models/MODEL_best_model.pt", type=str,
+    '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output_test/MODEL/2024-06-21 16:16:22_back/saved_models/MODEL_best_model.pt", type=str,
     help="Load pre-trained model for testing or resume training. Specify "
             "the epoch to load or 'best' to load the best model. Default=None "
             "means do not load any model.")
@@ -76,7 +84,7 @@ def get_parser():
     # Deep Learning strategies
     ##############################################################
     parser.add_argument(
-        '--learning_rate', '-lr', default=5e-4, type=float)
+        '--learning_rate', '-lr', default=1e-4, type=float)
     parser.add_argument(
         '--weight_decay', '-wd', default=0.01, type=float)
     parser.add_argument(
@@ -146,13 +154,13 @@ def check_and_add_additional_args(args):
     sys.path.append(parent_dir)
     import common.time_utils as time_utils
     # 定义各种保存路径
-    args.base_dir = '.'          
+    args.base_dir = '/private/wangchen/instance_model/'          
     args.save_base_dir = 'output' # 用于保存输出和模型来的目录
     args.save_dir = os.path.join(args.base_dir, args.save_base_dir) # output
     base_time = time_utils.get_cur_time_string()
-    args.model_dir = os.path.join(args.save_dir, args.model_name, base_time) # output/MODEL
-    args.log_dir = os.path.join(args.save_dir, 'log', base_time) # output/log
-    args.tensorboard_dir = os.path.join(args.save_dir, 'tensorboard', base_time) # output/tensorboard
+    args.model_dir = os.path.join(args.save_dir, args.model_name, base_time+f"_{args.train_part}") # output/MODEL
+    args.log_dir = os.path.join(args.save_dir, 'log', base_time+f"_{args.train_part}") # output/log
+    args.tensorboard_dir = os.path.join(args.save_dir, 'tensorboard', base_time+f"_{args.train_part}") # output/tensorboard
     args.config = os.path.join(args.save_dir, 'config_' + args.model_name + '.yaml')
     return args
     

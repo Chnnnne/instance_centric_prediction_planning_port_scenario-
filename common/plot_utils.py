@@ -223,11 +223,12 @@ def draw_units(units, fut_traj, output_dir="tmp"):
 
 def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = None, his_traj = None, fut_traj = None, output_dir="tmp", other_info = None):
     print("begin draw ")
-    fig, ax = plt.subplots(figsize=(22,12),dpi=800)
+    fig, ax = plt.subplots(figsize=(16,10),dpi=300)
     # map/ candidate ref path/ gt candidate ref path/ agent head
     draw_candidate_refpaths(ori, candidate_refpaths,my_ax=ax, cand_gt_idx = cand_gt_idx)
     ax.axis('equal')
-    traj_all = np.concatenate((his_traj, fut_traj), axis=0)
+    
+    traj_all = np.concatenate((his_traj, fut_traj), axis=0) if his_traj != None else fut_traj
     end = -1
     if traj_all.shape[0] > 150:
         end = 150

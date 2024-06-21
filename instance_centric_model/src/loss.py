@@ -3,15 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Loss(nn.Module):
-    def __init__(self,):
+    def __init__(self,args):
         """
         reduction: loss reduction, "sum" or "mean" (batch mean);
         """
         super(Loss, self).__init__()
+        self.args = args
         self.lambda1 = 1
         self.lambda2 = 0.1
         self.lambda3 = 1
         self.lambda4 = 1
+        self.lambda5 = 3
+        self.lambda6 = 2
 
         self.temper = 0.01
         self.d_safe = 3.0
@@ -65,13 +68,14 @@ class Loss(nn.Module):
         # 算出3条traj中跟真值最接近的那条idx，维度B, 然后计算
         scores, weights = output_dict['scores'], output_dict['weights']
         min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device)) # B,3,50,2   B,50,2->B
-        irl_loss = F.cross_entropy(scores, min_idx)
-        # irl_loss = torch.tensor(0).cuda()
-        weights_regularization = torch.square(weights).mean()
-        # weights_regularization = torch.tensor(0).cuda()
+        if self.args.train_part == "back" or self.args.train_part == "joint":
+            irl_loss = F.cross_entropy(scores, min_idx)
+            weights_regularization = torch.square(weights).mean()
+        else:
+            irl_loss = torch.tensor(0).cuda()
+            weights_regularization = torch.tensor(0).cuda()
 
-
-        # if True:
+        '''
         if epoch > 10:
             pred_trajs_t = pred_trajs.view(S, m, horizon, dim) #S,3M,50,2
             plan_traj = input_dict["plan_feat"].cuda()[pred_mask][:, :, :2] # S, 50, 2
@@ -86,29 +90,34 @@ class Loss(nn.Module):
             min_distances_sum = torch.clamp(min_distances_sum, max=self.d_safe)# S
             safety_loss = -torch.mean(min_distances_sum)
 
-            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss + self.lambda4 * safety_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss+ irl_loss + weights_regularization
-            loss = irl_loss +weights_regularization
-            loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
-                         "traj_loss": self.lambda2*reg_loss,
-                         "score_loss": self.lambda3*score_loss,
+            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss + self.lambda4 * safety_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
+            loss = self.lambda5 * irl_loss + self.lambda6 * weights_regularization
+            loss_dict = {"ref_cls_loss": self.lambda1 * cls_loss,
+                         "traj_loss": self.lambda2 * reg_loss,
+                         "score_loss": self.lambda3 * score_loss,
                          "safety_loss": self.lambda4 * safety_loss,
-                         "plan_reg_loss": self.lambda2*plan_reg_loss,
-                         "plan_score_loss": self.lambda3*plan_score_loss,
-                         "irl_loss": irl_loss,
-                         "weights_regularization": weights_regularization
+                         "plan_reg_loss": self.lambda2 * plan_reg_loss,
+                         "plan_score_loss": self.lambda3 * plan_score_loss,
+                         "irl_loss": self.lambda5 * irl_loss,
+                         "weights_regularization": self.lambda6 * weights_regularization
                          }
         else:
-            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + irl_loss + weights_regularization
+        '''
+        if self.args.train_part == "back":
+            loss = self.lambda5 * irl_loss + self.lambda6 * weights_regularization
+        elif self.args.train_part == "front":
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss
+        else:# joint
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
 
-            loss = irl_loss + weights_regularization
-            loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
-                         "traj_loss": self.lambda2*reg_loss,
-                         "score_loss": self.lambda3*score_loss,
-                         "plan_reg_loss": self.lambda2*plan_reg_loss,
-                         "plan_score_loss": self.lambda3*plan_score_loss,
-                         "irl_loss": irl_loss,
-                         "weights_regularization": weights_regularization
-                         }
+        loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
+                        "traj_loss": self.lambda2*reg_loss,
+                        "score_loss": self.lambda3*score_loss,
+                        "plan_reg_loss": self.lambda2*plan_reg_loss,
+                        "plan_score_loss": self.lambda3*plan_score_loss,
+                        "irl_loss": self.lambda5 * irl_loss,
+                        "weights_regularization": self.lambda6 * weights_regularization
+                        }
         return loss, loss_dict
     
     # def forward(self, input_dict, output_dict, epoch=1):

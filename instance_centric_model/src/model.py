@@ -48,10 +48,10 @@ class Model(nn.Module):
             nn.Linear(self.args.decoder_hidden_size, self.args.refpath_dim)
         )
         
-        self.plan_net = PlanNet(
-            input_size=self.args.plan_input_size, 
-            hidden_size=self.args.d_model
-        )
+        # self.plan_net = PlanNet(
+        #     input_size=self.args.plan_input_size, 
+        #     hidden_size=self.args.d_model
+        # )
         
         self.traj_decoder = TrajDecoder(
             input_size=self.args.d_model,
@@ -67,11 +67,14 @@ class Model(nn.Module):
             m=self.args.m,
             refpath_dim=self.args.refpath_dim
         )
-
-        # self.scorer = ScoreDecoder(
-        #     n_order=self.args.bezier_order, 
-        # )
-        self.scorer = None
+        if self.args.train_part == "back":
+            self.scorer = None
+        elif self.args.train_part == "front":
+            pass
+        else:# joint
+            self.scorer = ScoreDecoder(
+                n_order=self.args.bezier_order, 
+            )
         
         # self.mat_T = self._get_T_matrix_bezier(n_order=self.args.bezier_order, n_step=50)
         # 会保存到model的state_dict中
@@ -97,8 +100,8 @@ class Model(nn.Module):
         map_mask = (map_polylines_mask.sum(dim=-1) > 0)  
         agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # agent_feats [b,all_n-Max, d_agent]
         
-        plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool() # B,N,50,4   B,N,50
-        agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # 
+        # plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool() # B,N,50,4   B,N,50
+        # agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # 
         
         candidate_refpaths_cords, candidate_refpaths_vecs, candidate_mask = batch_dict['candidate_refpaths_cords'].cuda(), batch_dict['candidate_refpaths_vecs'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
         _, agent_N, M, _, _ = candidate_refpaths_cords.shape
@@ -135,12 +138,11 @@ class Model(nn.Module):
 
         plan_bcp_with_gt = plan_param_with_gt.view(plan_param_with_gt.shape[0], -1, 2) # B,(n_order+1)*2 -> B,(n_order+1),2 
         plan_traj_with_gt = torch.matmul(self.mat_T, plan_bcp_with_gt) # B, 50, 2
+        if self.args.train_part == "front":
+            scores, weights = None, None
+        else: # back joint
+            scores, weights = self.scorer(plan_trajs.clone(), plan_params, plan_traj_probs, agent_feats[:,0,:], trajs.clone(), param, traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
 
-        scores, weights = self.scorer(plan_trajs.clone(), plan_params, plan_traj_probs, agent_feats[:,0,:], trajs.clone(), param, traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
-        # scores, weights = None, None
-        # transforms = get_transform(batch_dict['agent_vecs'].cuda()) # B,N,2 -> B,N,2,2
-        # plan_trajs = transform_to_ori(plan_trajs, transforms[:,0,:,:], batch_dict['agent_ctrs'].cuda()[:,0,:]) # B,3,50,2 + B,2,2 + B,2
-        # trajs = transform_to_ori(trajs, transforms, batch_dict['agent_ctrs'].cuda(), all_candidate_mask) # B,N,3m,50,2 + B,N,2,2 + B,N,2
         res = {"cand_refpath_probs": cand_refpath_probs, # B,N,M
                 "traj_with_gt": traj_with_gt,#B,N,1,50,2
                 "trajs": trajs, # B,N,3M,50,2
