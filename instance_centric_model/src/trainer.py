@@ -322,7 +322,7 @@ class Trainer(object):
     # 单个epoch的训练
     def _train_epoch(self, epoch):
         self.net.train()
-        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "plan_score_loss":0,"irl_loss":0,"weights_regularization":0}
+        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "irl_loss":0,"weights_regularization":0}
         total_it_each_epoch = len(self.data_loaders['train'])
         dataloader_iter = iter(self.data_loaders['train'])
         with tqdm.trange(0, total_it_each_epoch, desc='train_epoch', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
@@ -345,7 +345,7 @@ class Trainer(object):
                 # if "safety_loss" in loss_dict:
                 #     losses_epoch["safety_loss"] += loss_dict["safety_loss"].detach().item()
                 losses_epoch["plan_reg_loss"] += loss_dict["plan_reg_loss"].detach().item()
-                losses_epoch["plan_score_loss"] += loss_dict["plan_score_loss"].detach().item()
+                # losses_epoch["plan_score_loss"] += loss_dict["plan_score_loss"].detach().item()
                 losses_epoch["irl_loss"] += loss_dict["irl_loss"].detach().item()
                 losses_epoch["weights_regularization"] += loss_dict["weights_regularization"].detach().item()
 

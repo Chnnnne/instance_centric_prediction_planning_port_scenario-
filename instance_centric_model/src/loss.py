@@ -58,10 +58,10 @@ class Loss(nn.Module):
         plan_reg_loss = F.smooth_l1_loss(plan_traj_with_gt, ego_gt_traj, reduction="sum")/B
 
         # 4.2 planning traj prob loss
-        plan_pred_trajs = output_dict['plan_trajs'].view(B,3,horizon*dim) # B,3,50,2 -> B,3,100
-        ego_gt_traj = ego_gt_traj.view(B, horizon*dim)# B,100
-        plan_score_gt = F.softmax(-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper, dim=-1).detach() # B,3,100 + B,100 -> B,3 -> B,3
-        plan_score_loss = F.binary_cross_entropy(output_dict['plan_traj_probs'], plan_score_gt, reduction='sum')/B # B, 3 + B, 3
+        # plan_pred_trajs = output_dict['plan_trajs'].view(B,3,horizon*dim) # B,3,50,2 -> B,3,100
+        # ego_gt_traj = ego_gt_traj.view(B, horizon*dim)# B,100
+        # plan_score_gt = F.softmax(-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper, dim=-1).detach() # B,3,100 + B,100 -> B,3 -> B,3
+        # plan_score_loss = F.binary_cross_entropy(output_dict['plan_traj_probs'], plan_score_gt, reduction='sum')/B # B, 3 + B, 3
 
         # irl loss
         # scores B3    weight B8
@@ -106,15 +106,15 @@ class Loss(nn.Module):
         if self.args.train_part == "back":
             loss = self.lambda5 * irl_loss + self.lambda6 * weights_regularization
         elif self.args.train_part == "front":
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss 
         else:# joint
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
 
         loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
                         "traj_loss": self.lambda2*reg_loss,
                         "score_loss": self.lambda3*score_loss,
                         "plan_reg_loss": self.lambda2*plan_reg_loss,
-                        "plan_score_loss": self.lambda3*plan_score_loss,
+                        # "plan_score_loss": self.lambda3*plan_score_loss,
                         "irl_loss": self.lambda5 * irl_loss,
                         "weights_regularization": self.lambda6 * weights_regularization
                         }

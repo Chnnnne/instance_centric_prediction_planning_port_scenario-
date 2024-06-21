@@ -18,11 +18,11 @@ class PlanDecoder(nn.Module):
             nn.Linear(hidden_size, (n_order+1)*2) # n阶贝塞尔曲线，有n+1个控制点
         )
         
-        self.traj_prob_layer = nn.Sequential(
-            ResMLP(input_size + (n_order+1)*2, hidden_size, hidden_size),
-            nn.Linear(hidden_size, 1),
-            nn.Softmax(dim=1)
-        )
+        # self.traj_prob_layer = nn.Sequential(
+        #     ResMLP(input_size + (n_order+1)*2, hidden_size, hidden_size),
+        #     nn.Linear(hidden_size, 1),
+        #     nn.Softmax(dim=1)
+        # )
         self.vel_emb = nn.Parameter(torch.Tensor(1, 3, embed_dim))
 
 
@@ -51,8 +51,9 @@ class PlanDecoder(nn.Module):
   
         prob_input = torch.cat([ego_feat.unsqueeze(1).repeat(1,3,1), param],dim=-1) # B,3,D+(n_order+1)*2
         # 2.给traj打分
-        traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B,3
+        # traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B,3
 
 
         param_with_gt = param[all_gt_refpath==1] # B, (norder+1)*2
-        return param, traj_prob_tensor, param_with_gt
+        # return param, traj_prob_tensor, param_with_gt
+        return param, param_with_gt

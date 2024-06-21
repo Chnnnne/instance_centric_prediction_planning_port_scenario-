@@ -129,7 +129,7 @@ class Model(nn.Module):
         
         # 目标是输出自车的规划轨迹，我们需要给它提供自己的意图（也即一两个候选path）（根据5s点位于的坐标，来得到候选path）我们有了候选path，1.不用打分2.生成3条轨迹， 3.traj打分然后
         ego_refpath_feats = self.refpath_encoder(torch.cat([ego_refpath_cords.reshape(B,-1), ego_refpath_vecs.reshape(B, -1)],dim=-1)) # B,40+40 -> B, 64
-        plan_params, plan_traj_probs,plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
+        plan_params, plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
         if torch.isnan(plan_params).any():
             print("param contain nan", param)
         
@@ -141,7 +141,7 @@ class Model(nn.Module):
         if self.args.train_part == "front":
             scores, weights = None, None
         else: # back joint
-            scores, weights = self.scorer(plan_trajs.clone(), plan_params, plan_traj_probs, agent_feats[:,0,:], trajs.clone(), param, traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
+            scores, weights = self.scorer(plan_trajs.clone(), plan_params.clone(), agent_feats[:,0,:], trajs.clone(), param.clone(), traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
 
         res = {"cand_refpath_probs": cand_refpath_probs, # B,N,M
                 "traj_with_gt": traj_with_gt,#B,N,1,50,2
@@ -149,7 +149,7 @@ class Model(nn.Module):
                 "traj_probs": traj_probs, # B,N,3M
                 "all_candidate_mask":all_candidate_mask, # B,N,3M
                 "plan_trajs":plan_trajs, # B,3,50,2
-                "plan_traj_probs":plan_traj_probs, # B,3
+                # "plan_traj_probs":plan_traj_probs, # B,3
                 "plan_traj_with_gt":plan_traj_with_gt, # B, 50, 2
                 "scores":scores,
                 "weights":weights
