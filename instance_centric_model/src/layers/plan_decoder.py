@@ -56,4 +56,4 @@ class PlanDecoder(nn.Module):
 
         param_with_gt = param[all_gt_refpath==1] # B, (norder+1)*2
         # return param, traj_prob_tensor, param_with_gt
-        return param, param_with_gt
+        return param,  param_with_gt

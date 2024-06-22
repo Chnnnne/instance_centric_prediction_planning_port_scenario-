@@ -106,9 +106,10 @@ class Loss(nn.Module):
         if self.args.train_part == "back":
             loss = self.lambda5 * irl_loss + self.lambda6 * weights_regularization
         elif self.args.train_part == "front":
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss 
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss
+            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3*plan_score_loss 
         else:# joint
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda2 * plan_reg_loss + self.lambda3*plan_score_loss + self.lambda5 * irl_loss + self.lambda6 * weights_regularization
 
         loss_dict = {"ref_cls_loss": self.lambda1*cls_loss,
                         "traj_loss": self.lambda2*reg_loss,

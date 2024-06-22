@@ -322,6 +322,7 @@ class Trainer(object):
     # 单个epoch的训练
     def _train_epoch(self, epoch):
         self.net.train()
+        # losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "plan_score_loss":0,"irl_loss":0,"weights_regularization":0}
         losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "irl_loss":0,"weights_regularization":0}
         total_it_each_epoch = len(self.data_loaders['train'])
         dataloader_iter = iter(self.data_loaders['train'])

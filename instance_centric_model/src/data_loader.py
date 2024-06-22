@@ -12,9 +12,9 @@ class InterDataSet(Dataset):
         random.seed(777)
         random.shuffle(self.ids)
         if set_name=="train":
-            self.ids = self.ids[:300000]
+            self.ids = self.ids[:50000]
         else:
-            self.ids = self.ids[:40000]
+            self.ids = self.ids[:20000]
         
     def __len__(self):
         return len(self.ids)
@@ -25,7 +25,9 @@ class InterDataSet(Dataset):
             try:
                 data_dict = pickle.load(f)
             except:
-                bak_up_file_path = "/private/wangchen/instance_model/instance_model_data_new_version/test/howo25_1692182507.8921573.pkl"
+                print("something wroth occurs during load the pkl data, plz check\n"*30)
+                exit()
+                bak_up_file_path = "/private/wangchen/instance_model/instance_model_data/test/howo55_1691777795.6718624.pkl"
                 with open(bak_up_file_path, "rb") as b:
                     data_dict = pickle.load(b)
         return data_dict

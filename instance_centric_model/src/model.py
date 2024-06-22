@@ -129,7 +129,8 @@ class Model(nn.Module):
         
         # 目标是输出自车的规划轨迹，我们需要给它提供自己的意图（也即一两个候选path）（根据5s点位于的坐标，来得到候选path）我们有了候选path，1.不用打分2.生成3条轨迹， 3.traj打分然后
         ego_refpath_feats = self.refpath_encoder(torch.cat([ego_refpath_cords.reshape(B,-1), ego_refpath_vecs.reshape(B, -1)],dim=-1)) # B,40+40 -> B, 64
-        plan_params, plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
+        plan_params,  plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
+        # plan_params, plan_traj_probs, plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
         if torch.isnan(plan_params).any():
             print("param contain nan", param)
         
