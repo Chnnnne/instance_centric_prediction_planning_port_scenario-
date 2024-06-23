@@ -1,4 +1,6 @@
-import os
+import os,sys
+parent_dir = "/data/wangchen/instance_centric/"
+sys.path.append(parent_dir)
 import datetime
 
 from utils import timed_main, set_seed, init_dist_pytorch, create_logger

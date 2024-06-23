@@ -3,9 +3,11 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import quad
+from scipy.special import comb
 from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
 from scipy.spatial.distance import squareform
 from scipy.spatial import KDTree
+import torch
 # from shapely.geometry import LineString, Point
 
 
@@ -191,6 +193,76 @@ def cluster_trajs(traj_cords):
     clusters = fcluster(Z, t=0.6, criterion='distance')
     # clusters:每条轨迹属于哪一个cluster， kd_trees每条轨迹对应的kd_tree   
     return clusters, kd_trees 
+
+
+
+def bernstein_poly(i, n, t):
+    """计算伯恩斯坦多项式的值"""
+    return comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
+
+def bezier_derivative(control_points):
+    """
+    计算贝塞尔曲线的一阶导数控制点
+    input:
+        - control_points   B,(n_order+1), 2
+        - control_points   B,3,(n_order+1), 2
+        - control_points   B,N,3m,(n_order+1), 2
+    output:
+        - derivative_points: B,3,n_order, 2
+        - derivative_points   B,N,3m,n_order, 2
+    """
+    squeeze_one_flag = False
+    squeeze_two_flag = False
+    if len(control_points.shape) == 3:
+        squeeze_two_flag = True
+        control_points = control_points.unsqueeze(1).unsqueeze(1) # B,1,1,n+1,2
+    if len(control_points.shape) == 4:
+        squeeze_one_flag = True
+        control_points = control_points.unsqueeze(1) # B,1,3,n+1,2
+    n = control_points.shape[-2] - 1 # n阶贝塞尔曲线
+    derivative = [n * (control_points[:,:,:,i + 1] - control_points[:,:,:,i]) for i in range(n)] # n个[B,N,M,2]
+    derivative = torch.stack(derivative, dim=-2) # B,N,3m,n,2
+    if squeeze_two_flag:
+        derivative = derivative.squeeze(1).squeeze(1)# B,n,2
+    if squeeze_one_flag:
+        derivative = derivative.squeeze(1) # B,3,n,2
+    return derivative
+
+def bezier_curve(control_points, t_values):
+    '''
+    input:
+        - control_points   B,(n_order+1), 2
+        - control_points   B,3,(n_order+1), 2
+        - control_points   B,N,3m,(n_order+1), 2
+    return: 
+        - curve_points  B,3,50, 2
+        - curve_points  B,N,3m,50, 2
+    '''
+    squeeze_one_flag = False
+    squeeze_two_flag = False
+    if len(control_points.shape) == 3:
+        squeeze_two_flag = True
+        control_points = control_points.unsqueeze(1).unsqueeze(1) # B,1,1,n+1,2
+    if len(control_points.shape) == 4:
+        squeeze_one_flag = True
+        control_points = control_points.unsqueeze(1) # B,1,3,n+1,2
+    B,N,M,n,_ = control_points.shape
+    n -= 1 # n代表贝塞尔曲线的阶数
+    curve_points = []
+    for t_index, t in enumerate(t_values): # 采样个数
+        point = torch.zeros(B,N,M,2).cuda()
+        for i in range(n + 1): # 计算n+1次
+            bernstein = bernstein_poly(i, n, t)
+            point += bernstein * control_points[:,:,:,i,:] # B,N,M,2
+        curve_points.append(point)
+    curve_points = torch.stack(curve_points, dim=-2) # B,N,M,50,2
+    if squeeze_two_flag:
+        curve_points = curve_points.squeeze(1).squeeze(1) # B,50,2
+    if squeeze_one_flag:
+        curve_points = curve_points.squeeze(1) # B,M,50,2
+    return curve_points
+
+
 
 if __name__ == "__main__":
     # get_bezier_curve_length()

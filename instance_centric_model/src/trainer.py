@@ -366,7 +366,7 @@ class Trainer(object):
         在测试集上对模型进行验证，计算准确率和对应的损失
         """
         self.net.eval()  # evaluation mode
-        total, top_acc, target_fde, traj_ade, traj_fde = torch.zeros(5).cuda()
+        total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, all_total, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk = torch.zeros(11).cuda()
         total_it_each_epoch = len(self.data_loaders[mode])
         dataloader_iter = iter(self.data_loaders[mode])
         with tqdm.trange(0, total_it_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
@@ -377,22 +377,37 @@ class Trainer(object):
                     dataloader_iter = iter(self.data_loaders['test'])
                     input_dict = next(dataloader_iter)
                 output_dict = self.net(input_dict)
-                batch_size, top, t_ade, t_fde = self.net.module.compute_model_metrics(input_dict, output_dict)
-                total += torch.tensor(batch_size).cuda()
+                valid_batch_size, top, t_ade, t_fde, mr, jerk, batch_size, plan_ade, plan_fde, plan_mr, plan_jerk = self.net.module.compute_model_metrics(input_dict, output_dict)
+                total += torch.tensor(valid_batch_size).cuda()
                 top_acc += torch.tensor(top).cuda()
-                # target_fde += torch.as_tensor(fde, device='cuda')
                 traj_ade += torch.as_tensor(t_ade, device='cuda')
                 traj_fde += torch.as_tensor(t_fde, device='cuda')
+                missing_rate += torch.as_tensor(mr, device='cuda')
+                RMS_jerk += torch.as_tensor(jerk,device='cuda')
+
+                all_total += torch.tensor(batch_size).cuda()
+                plan_traj_ade += torch.as_tensor(plan_ade, device='cuda')
+                plan_traj_fde += torch.as_tensor(plan_fde, device='cuda')
+                plan_missing_rate += torch.as_tensor(plan_mr, device='cuda')
+                plan_RMS_jerk += torch.as_tensor(plan_jerk,device='cuda')
+
         dist.barrier()
-        for x in [total, top_acc, traj_ade, traj_fde]:
+        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk]:
             dist.reduce(x, 0) # reduce并返回给进程0
   
         if self.args.local_rank == 0:
             top_acc = 100 * top_acc.item() / total.item()
-            # target_fde = target_fde.item() / total.item()
             traj_ade = traj_ade.item() / total.item()
             traj_fde = traj_fde.item() / total.item()
-            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}')
+            missing_rate = 100 * missing_rate.item() / total.item()
+            RMS_jerk = RMS_jerk.item() / total.item()
+
+            plan_traj_ade = plan_traj_ade.item() / all_total.item()
+            plan_traj_fde = plan_traj_fde.item() / all_total.item()
+            plan_missing_rate = 100 * plan_missing_rate.item() / all_total.item()
+            plan_RMS_jerk = plan_RMS_jerk.item() / all_total.item()
+
+            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}, MR={missing_rate:.3f}, RMS_jerk={RMS_jerk:.5f}, plan_traj_ade={plan_traj_ade:.5f}, plan_traj_fde={plan_traj_fde:.5f}, plan_MR={plan_missing_rate:.3f}, plan_RMS_jerk={plan_RMS_jerk:.5f}')
             if traj_ade < self.best_ade:
                 self.best_ade = traj_ade
                 self._save_checkpoint(epoch, best_epoch=True)  # save model

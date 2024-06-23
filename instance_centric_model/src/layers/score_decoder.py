@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from scipy.special import comb
-
+from common.math_utils import bernstein_poly, bezier_derivative, bezier_curve
 
 
 
@@ -32,6 +32,7 @@ class ScoreDecoder(nn.Module):
         output: 
             - features: B,3,4
             - ego_traj: B,3,50,4
+        除以5的原因：是按照1s走的50个点而算出来的速度， 而实际情况是5s走了50个点，所以速度/5
         ''' 
 
         B,_,T,_ = ego_traj.shape
@@ -50,7 +51,7 @@ class ScoreDecoder(nn.Module):
         acc_scaler = torch.norm(acc_vectors,dim=-1)# B,3,50
 
         #3 加加速度
-        jerk_param = bezier_derivative(acc_param) # B,3,(n_order),2 -> B,3,(n_order - 2),2
+        jerk_param = bezier_derivative(acc_param) # B,3,(n_order-1),2 -> B,3,(n_order - 2),2
         jerk_vectors = bezier_curve(jerk_param, t_values)/5 # B,3,50,2
         jerk_vectors = jerk_vectors.clamp(-15,15)
         jerk_scaler = torch.norm(jerk_vectors,dim=-1)# B,3,50
@@ -264,7 +265,7 @@ class ScoreDecoder(nn.Module):
         
 
 
-    def forward(self, ego_trajs, plan_param, ego_traj_probs, ego_encoding, agents_traj, param, agents_traj_probs, agents_states, all_candidate_mask, agent_mask, agent_vecs, agent_ctrs,mat_T):
+    def forward(self, ego_trajs, plan_param, ego_encoding, agents_traj, param, agents_traj_probs, agents_states, all_candidate_mask, agent_mask, agent_vecs, agent_ctrs,mat_T):
         '''
         - ego_trajs: B,3,50,2
         - plan_params:  B,3,(n_order+1)*2
@@ -365,43 +366,55 @@ def transform_to_ori(feat, transforms, ctrs, mask = None):
     return feat
 
 
-def bernstein_poly(i, n, t):
-    """计算伯恩斯坦多项式的值"""
-    return comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
+# def bernstein_poly(i, n, t):
+#     """计算伯恩斯坦多项式的值"""
+#     return comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
 
-def bezier_derivative(control_points):
-    """
-    计算贝塞尔曲线的一阶导数控制点
-    input:
-        - control_points   B,3,(n_order+1), 2
-        - control_points   B,N,3m,(n_order+1), 2
-    output:
-        - derivative_points: B,3,n_order, 2
-        - derivative_points   B,N,3m,n_order, 2
-    """
-    squeeze_flag = False
-    if len(control_points.shape) == 4:
-        squeeze_flag = True
-        control_points = control_points.unsqueeze(1) # B,1,3,n+1,2
-    n = control_points.shape[-2] - 1 # n阶贝塞尔曲线
-    derivative = [n * (control_points[:,:,:,i + 1] - control_points[:,:,:,i]) for i in range(n)] # n个[B,N,M,2]
-    derivative = torch.stack(derivative, dim=-2) # B,N,3m,n,2
-    if squeeze_flag:
-        derivative = derivative.squeeze(1) # B,3,n,2
-    return derivative
+# def bezier_derivative(control_points):
+#     """
+#     计算贝塞尔曲线的一阶导数控制点
+#     input:
+#         - control_points   B,(n_order+1), 2
+#         - control_points   B,3,(n_order+1), 2
+#         - control_points   B,N,3m,(n_order+1), 2
+#     output:
+#         - derivative_points: B,3,n_order, 2
+#         - derivative_points   B,N,3m,n_order, 2
+#     """
+#     squeeze_one_flag = False
+#     squeeze_two_flag = False
+#     if len(control_points.shape) == 3:
+#         squeeze_two_flag = True
+#         control_points = control_points.unsqueeze(1).unsqueeze(1) # B,1,1,n+1,2
+#     if len(control_points.shape) == 4:
+#         squeeze_one_flag = True
+#         control_points = control_points.unsqueeze(1) # B,1,3,n+1,2
+#     n = control_points.shape[-2] - 1 # n阶贝塞尔曲线
+#     derivative = [n * (control_points[:,:,:,i + 1] - control_points[:,:,:,i]) for i in range(n)] # n个[B,N,M,2]
+#     derivative = torch.stack(derivative, dim=-2) # B,N,3m,n,2
+#     if squeeze_two_flag:
+#         derivative = derivative.squeeze(1).squeeze(1)# B,n,2
+#     if squeeze_one_flag:
+#         derivative = derivative.squeeze(1) # B,3,n,2
+#     return derivative
 
-def bezier_curve(control_points, t_values):
+# def bezier_curve(control_points, t_values):
     '''
     input:
+        - control_points   B,(n_order+1), 2
         - control_points   B,3,(n_order+1), 2
         - control_points   B,N,3m,(n_order+1), 2
     return: 
         - curve_points  B,3,50, 2
         - curve_points  B,N,3m,50, 2
     '''
-    squeeze_flag = False
+    squeeze_one_flag = False
+    squeeze_two_flag = False
+    if len(control_points.shape) == 3:
+        squeeze_two_flag = True
+        control_points = control_points.unsqueeze(1).unsqueeze(1) # B,1,1,n+1,2
     if len(control_points.shape) == 4:
-        squeeze_flag = True
+        squeeze_one_flag = True
         control_points = control_points.unsqueeze(1) # B,1,3,n+1,2
     B,N,M,n,_ = control_points.shape
     n -= 1 # n代表贝塞尔曲线的阶数
@@ -413,6 +426,8 @@ def bezier_curve(control_points, t_values):
             point += bernstein * control_points[:,:,:,i,:] # B,N,M,2
         curve_points.append(point)
     curve_points = torch.stack(curve_points, dim=-2) # B,N,M,50,2
-    if squeeze_flag:
+    if squeeze_two_flag:
+        curve_points = curve_points.squeeze(1).squeeze(1) # B,50,2
+    if squeeze_one_flag:
         curve_points = curve_points.squeeze(1) # B,M,50,2
     return curve_points

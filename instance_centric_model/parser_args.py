@@ -19,7 +19,7 @@ def get_parser():
         '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=16, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=8, type=int, help='number of batch size')
     parser.add_argument(
         '--workers', type=int, default=32, help='number of workers for dataloader')
     parser.add_argument(
@@ -46,30 +46,30 @@ def get_parser():
              'pre-trained model')
     parser.add_argument(
         '--num_epochs', '-ne', default=50, type=int, help='number of epochs to train for')
-    parser.add_argument('--train_part', '-tp', default="front", type=str, help="front/back/joint")
+    parser.add_argument('--train_part', '-tp', default="joint", type=str, help="front/back/joint")
     
     # train front part
-    parser.add_argument(
-        '--load_checkpoint', '-lc', default=None, type=str,
-        help="Load pre-trained model for testing or resume training. Specify "
-             "the epoch to load or 'best' to load the best model. Default=None "
-             "means do not load any model.")
     # parser.add_argument(
-    # '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output_test/MODEL/2024-06-21 16:16:22_back/saved_models/MODEL_best_model.pt", type=str,
-    # help="Load pre-trained model for testing or resume training. Specify "
-    #         "the epoch to load or 'best' to load the best model. Default=None "
-    #         "means do not load any model.")
+    #     '--load_checkpoint', '-lc', default=None, type=str,
+    #     help="Load pre-trained model for testing or resume training. Specify "
+    #          "the epoch to load or 'best' to load the best model. Default=None "
+    #          "means do not load any model.")
+    parser.add_argument(
+    '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output/MODEL/2024-06-23 12:47:19_back/saved_models/MODEL_epoch_020.pt", type=str,
+    help="Load pre-trained model for testing or resume training. Specify "
+            "the epoch to load or 'best' to load the best model. Default=None "
+            "means do not load any model.")
        
     parser.add_argument(
         '--save_every', '-se', default=5, type=int,
         help="Save model weights and outputs every save_every epochs.")
     
     parser.add_argument(
-        '--start_validation', default=10, type=int,
+        '--start_validation', default=5, type=int,
         help="Validate the model starting from this epoch")
     # 1 for slow but accurate results, 20 for fast results
     parser.add_argument(
-        '--validate_every', '-ve', default=10, type=int,
+        '--validate_every', '-ve', default=5, type=int,
         help="Validate model every validate_every epochs")
     
     ##############################################################
@@ -142,8 +142,7 @@ def check_and_add_additional_args(args):
         args.device = 'cpu'
         args.use_cuda = False
         
-    parent_dir = "/data/wangchen/instance_centric/"
-    sys.path.append(parent_dir)
+    
     import common.time_utils as time_utils
     # 定义各种保存路径
     args.base_dir = '/private/wangchen/instance_model/'          
