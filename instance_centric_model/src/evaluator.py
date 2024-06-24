@@ -1,5 +1,6 @@
 import sys
 sys.path.append('/data/wangchen/instance_centric/instance_centric_model')
+sys.path.append('/data/wangchen/instance_centric/')
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -163,7 +164,7 @@ class Evaluator(object):
             raise ValueError('You need to specify an epoch (int) if you want '
                              'to load a model or "best" to load the best '
                              'model! Check args.load_checkpoint')
-        return 0
+        return model_epoch
 
     def _load_or_restart(self, train_part, pt):
         """
@@ -210,7 +211,9 @@ class Evaluator(object):
 
     def _evaluate_loop(self, pts):
         phase_name = 'test'
+        torch.cuda.empty_cache()
         for pt in pts:
+            torch.cuda.empty_cache()
             self._evaluate_pt(pt)
 
     # 整个epoch的训练
@@ -335,7 +338,7 @@ class Evaluator(object):
                 plan_RMS_jerk += torch.as_tensor(plan_jerk,device='cuda')
 
         dist.barrier()
-        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk]:
+        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk, all_total]:
             dist.reduce(x, 0) # reduce并返回给进程0
   
         if self.args.local_rank == 0:
@@ -366,7 +369,7 @@ if __name__ == "__main__":
         set_seed(seed_value=7777)
     pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-23 12:47:19_back/saved_models/"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
-
+    pts.sort()
     log_file = args.log_dir + "/log_train_%s.txt"%datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     logger = create_logger(log_file, args.local_rank)
     log_args_to_file(args, logger)

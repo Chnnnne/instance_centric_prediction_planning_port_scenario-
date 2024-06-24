@@ -279,7 +279,7 @@ class Model(nn.Module):
             # ade
             plan_ade = torch.sum(torch.mean(torch.linalg.norm(plan_traj_best - ego_gt_traj,dim=-1),dim=-1)) # B,50,2 -> B,50->B->1
             # fde
-            plan_fde = torch.linalg.norm(plan_traj_best[:,-1,:] - ego_gt_traj[:,-1,:], -1)# B,2 -> B
+            plan_fde = torch.linalg.norm(plan_traj_best[:,-1,:] - ego_gt_traj[:,-1,:], dim = -1)# B,2 -> B
             plan_fde_sum = torch.sum(plan_fde) # B -> 1
             # mr
             plan_missing_num = torch.sum(plan_fde>3)
