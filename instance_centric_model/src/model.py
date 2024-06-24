@@ -297,7 +297,7 @@ class Model(nn.Module):
             # mean ade
             plan_ade = torch.sum(torch.mean(torch.mean(torch.linalg.norm(plan_trajs - ego_gt_traj[:,None,:,:],dim=-1),dim=-1))) # B,3,50,2 -> B,3,50 -> B,3 -> B ->1
             # mean fde
-            plan_fde = torch.linalg.norm(plan_trajs[:,:,-1,:] - ego_gt_traj[:,None,-1,:], -1)# B,3,2 - B,1,2 -> B,3
+            plan_fde = torch.linalg.norm(plan_trajs[:,:,-1,:] - ego_gt_traj[:,None,-1,:], dim=-1)# B,3,2 - B,1,2 -> B,3
             plan_fde_sum = plan_fde.mean(-1).sum() # B,3->B->1
             # mr
             plan_missing_num = batch_size - (plan_fde < 3).any(dim=-1).sum() # B,3 -> B -> 1
