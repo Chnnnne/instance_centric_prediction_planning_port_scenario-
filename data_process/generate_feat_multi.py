@@ -283,16 +283,35 @@ def generate_ego_future_feats(ego_info: dict, cur_index: list):
     ori = [ego_info['x'][cur_index], ego_info['y'][cur_index], 
             ego_info['vel'][cur_index], ego_info['vel_yaw'][cur_index], 
             ego_info['length'][cur_index], ego_info['width'][cur_index]]
-    candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+    candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
     if len(candidate_refpaths_cords) == 0:
         return None, None, None, None
     else:
-        gt_idx,_ = mp_seacher.get_candidate_gt_refpath_new(ego_traj_fut_15s,candidate_refpaths_cords, kd_trees)
-        if gt_idx == -1:
+        gt_refpath_idx,_ = mp_seacher.get_candidate_gt_refpath_new(ego_traj_fut_15s,candidate_refpaths_cords, kd_trees)
+        if gt_refpath_idx == -1:
             return None, None, None, None
         else:
+            # keep_traj_idx 是经过聚类之后保存的traj的idx和mappath idx是对应的
+
+            # 此处利用mp_idx = keep_traj_idx[gt_idx]找到对应的filter之后的mappath 序号，然后获取这个序号的末尾lane，和周边lane ，拿到他们的id过滤，可以得到过滤后
+            # 的mappath idx，再查一下keep_traj_idx是否是保存的idx，是的话，将其加入到ego的refpath
+            gt_mappth_idx = keep_traj_idx[gt_refpath_idx]
+            gt_mappath = map_paths[gt_mappth_idx]
+            neighbor_lane_ids = []
+            gt_mappath[-1].lane.left_neighbor_forward_lane.id()
+            gt_mappath[-1].lane.left_neighbor_reverse_lane
+            gt_mappath[-1].lane.right_neighbor_forward_lane
+            gt_mappath[-1].lane.right_neighbor_reverse_lane
+            neighbor_refpath_idxs = []
+            for mp_idx, mp in map_paths:
+                if mp[-1].lane.id() in neighbor_lane_ids:
+                    neighbor_refpath_idxs.append(mp_idx)
+            neighbor_ref = candidate_refpaths_cords[neighbor_refpath_idxs]
+            all_ref_path = [candidate_refpaths_cords[gt_refpath_idx], neighbor_ref]
+            gt = 0
+            
             # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,fut_traj=ego_traj_fut_15s)
-            ego_refpath_cords = mp_seacher.sample_points(candidate_refpaths_cords[gt_idx], num=20, return_content="points")#(20,2)
+            ego_refpath_cords = mp_seacher.sample_points(candidate_refpaths_cords[gt_refpath_idx], num=20, return_content="points")#(20,2)
             ego_refpath_vecs = mp_seacher.get_refpath_vec([ego_refpath_cords])[0]
             ego_refpath_cords = transform_to_local_coords(ego_refpath_cords, center_xy, center_heading)
             ego_refpath_cords = np.asarray(ego_refpath_cords)
@@ -344,7 +363,7 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
         # candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
-        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
         valid_flag = False
         if len(candidate_refpaths_cords) == 0:
             gt_cand = np.zeros(1) #(1,)
@@ -817,8 +836,8 @@ if __name__=="__main__":
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    input_path = '/private2/wanggang/pre_log_inter_data'
-    # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
+    # input_path = '/private2/wanggang/pre_log_inter_data'
+    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
     all_file_list = all_file_list[:int(len(all_file_list)/1)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
@@ -830,13 +849,13 @@ if __name__=="__main__":
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    pool = multiprocessing.Pool(processes=16)
-    pool.map(load_seq_save_features, range(len(cur_files)))
+    # pool = multiprocessing.Pool(processes=16)
+    # pool.map(load_seq_save_features, range(len(cur_files)))
 
-    # for i in range(1,len(cur_files)): # 19 error 21 draw
-    #     print("--"*20, i)
-    # #     # my_candidate_refpath_search_test(i)
-    #     load_seq_save_features(i)
+    for i in range(1,len(cur_files)): # 19 error 21 draw
+        print("--"*20, i)
+    #     # my_candidate_refpath_search_test(i)
+        load_seq_save_features(i)
 
     print("###########完成###############")
     # pool.close()

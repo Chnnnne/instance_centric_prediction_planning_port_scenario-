@@ -194,7 +194,7 @@ class MapPointSeacher():
         if self.get_start_pathunits(start_pathunits):
             map_paths = []
             self.search_range = self.get_search_range_refpath(ori[2])
-            for i in range(len(start_pathunits)):
+            for i in range(len(start_pathunits)):#从搜索到的start pathunit得到一个个mappath，最终放到一个mappaths里
                 start_pathunit = start_pathunits[i]
                 map_path = []
                 searched_length = 0.0
@@ -207,7 +207,7 @@ class MapPointSeacher():
             refpaths_cord, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现采出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
             # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
 
-            refpaths_cord, kd_trees = self.cluster_refpath(refpaths_cord)
+            refpaths_cord, kd_trees, keep_traj_idx = self.cluster_refpath(refpaths_cord)
             # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord)
             
 
@@ -216,7 +216,7 @@ class MapPointSeacher():
             print("len(candidate_refpaths_cord) == 0")
             return [],[],[],[]
             # filter
-        return refpaths_cord, map_paths, refpaths_dis, kd_trees
+        return refpaths_cord, map_paths, refpaths_dis, kd_trees, keep_traj_idx
         
 
 
@@ -343,7 +343,7 @@ class MapPointSeacher():
         print("len(out_refpaths_cord)", len(out_refpaths_cord))
         print("len(kd_trees)", len(kd_trees))
         
-        return out_refpaths_cord, kd_trees
+        return out_refpaths_cord, kd_trees, keep_traj_idx
 
     def get_pathunit_from_point(self, point,output_dir="tmp"):
         import matplotlib.pyplot as plt
