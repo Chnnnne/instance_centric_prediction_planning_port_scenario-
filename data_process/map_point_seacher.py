@@ -177,7 +177,7 @@ class MapPointSeacher():
     def get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(self, ori):
         '''
             return 
-            - refpaths_cord  #  M,5x,2   list[(50,2),(50,2)...]    每个item对应一个mappath
+            - refpaths_cord  #  M,5x,2   list[(50,2),(50,2)...]    每个item对应一个mappath, 2是一个ndarray
             - map_paths
             - refpaths_dis  # list[one_ref_path_dis_list] 每个item对应一个mappath
             - kdtress 每条候选轨迹对应一个kd-trees方便进行后续计算点到候选的距离
@@ -202,7 +202,7 @@ class MapPointSeacher():
                 
             if len(map_paths) == 0:
                 print("len(map_paths) == 0")
-                return [],[],[],[]
+                return [],[],[],[],[]
             map_paths = self.filter_mappaths(map_paths)
             refpaths_cord, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现采出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
             # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
@@ -214,7 +214,7 @@ class MapPointSeacher():
         
         if len(refpaths_cord) == 0:
             print("len(candidate_refpaths_cord) == 0")
-            return [],[],[],[]
+            return [],[],[],[],[]
             # filter
         return refpaths_cord, map_paths, refpaths_dis, kd_trees, keep_traj_idx
         
@@ -316,7 +316,7 @@ class MapPointSeacher():
         '''
         if len(in_refpaths_cords) == 1:
             print("only one refpath, no need of cluster")
-            return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])]
+            return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])], [0]
 
         def static_clusetr(cluster):
             cluster_dict = {}

@@ -274,7 +274,7 @@ def generate_ego_future_feats(ego_info: dict, cur_index: list):
     distances = np.sqrt(np.sum(np.diff(ego_traj_fut_5s, axis=0)**2, axis=1))
     cumulative_distance = np.cumsum(distances)[-1]  # 真实轨迹在5s的累计距离
     ego_v = ego_info['vel'][cur_index]
-    ego_vel_mode = 2
+    ego_vel_mode = 2 # 匀速
     if ego_v * 5 + 5 < cumulative_distance:
         ego_vel_mode = 1 # 加速
     elif ego_v * 5 - 5 > cumulative_distance:
@@ -285,41 +285,59 @@ def generate_ego_future_feats(ego_info: dict, cur_index: list):
             ego_info['length'][cur_index], ego_info['width'][cur_index]]
     candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
     if len(candidate_refpaths_cords) == 0:
-        return None, None, None, None
+        return None, None, None, None, None, None
     else:
         gt_refpath_idx,_ = mp_seacher.get_candidate_gt_refpath_new(ego_traj_fut_15s,candidate_refpaths_cords, kd_trees)
         if gt_refpath_idx == -1:
-            return None, None, None, None
+            return None, None, None, None, None, None
         else:
             # keep_traj_idx 是经过聚类之后保存的traj的idx和mappath idx是对应的
 
-            # 此处利用mp_idx = keep_traj_idx[gt_idx]找到对应的filter之后的mappath 序号，然后获取这个序号的末尾lane，和周边lane ，拿到他们的id过滤，可以得到过滤后
+            # 1. 此处利用mp_idx = keep_traj_idx[gt_idx]找到对应的filter之后的mappath 序号
+            # 2. 然后获取这个序号的mappath末尾pathunit的lane，和周边lane ，拿到他们的id
+            # 3. 遍历mappaths的每一个mappath的最后一个pu的lane id是否存在于neighbor ids中，
+            # 4. 存在，则说明该mappath位于gt的周边车道， 记录这个mappath idx（也即是sample后的cords idx）到 neighbor_mppath_idces
+            # 5. 如果这个idx仍在keep_traj——idx里，则完成了筛选且该refpath没有被聚类，将这个idx对应的cords加入neighbor cords中
+            # 6. 合并gt ref cords和neighbor cords
+            # gt = 0
+
             # 的mappath idx，再查一下keep_traj_idx是否是保存的idx，是的话，将其加入到ego的refpath
             gt_mappth_idx = keep_traj_idx[gt_refpath_idx]
             gt_mappath = map_paths[gt_mappth_idx]
             neighbor_lane_ids = []
-            gt_mappath[-1].lane.left_neighbor_forward_lane.id()
-            gt_mappath[-1].lane.left_neighbor_reverse_lane
-            gt_mappath[-1].lane.right_neighbor_forward_lane
-            gt_mappath[-1].lane.right_neighbor_reverse_lane
-            neighbor_refpath_idxs = []
-            for mp_idx, mp in map_paths:
-                if mp[-1].lane.id() in neighbor_lane_ids:
-                    neighbor_refpath_idxs.append(mp_idx)
-            neighbor_ref = candidate_refpaths_cords[neighbor_refpath_idxs]
-            all_ref_path = [candidate_refpaths_cords[gt_refpath_idx], neighbor_ref]
-            gt = 0
-            
-            # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_idx,fut_traj=ego_traj_fut_15s)
-            ego_refpath_cords = mp_seacher.sample_points(candidate_refpaths_cords[gt_refpath_idx], num=20, return_content="points")#(20,2)
-            ego_refpath_vecs = mp_seacher.get_refpath_vec([ego_refpath_cords])[0]
-            ego_refpath_cords = transform_to_local_coords(ego_refpath_cords, center_xy, center_heading)
-            ego_refpath_cords = np.asarray(ego_refpath_cords)
-            ego_refpath_vecs = np.asarray(ego_refpath_vecs)
-            ego_vel_mode = np.asarray(ego_vel_mode)
-            ego_gt_traj = np.asarray(ego_traj_fut_5s)
+            if gt_mappath[-1].lane.left_neighbor_forward_driving_lane() != None:
+                neighbor_lane_ids.append(gt_mappath[-1].lane.left_neighbor_forward_driving_lane().id().value())
+            if gt_mappath[-1].lane.right_neighbor_forward_driving_lane() != None:
+                neighbor_lane_ids.append(gt_mappath[-1].lane.right_neighbor_forward_driving_lane().id().value())
+            neighbor_mppath_idces = []
+            for mp_idx, mp in enumerate(map_paths):
+                if mp[-1].lane.id().value() in neighbor_lane_ids and mp_idx in keep_traj_idx:
+                    neighbor_mppath_idces.append(mp_idx)
+            neighbor_ref_cords = []
+            for n_idx in neighbor_mppath_idces:
+                neighbor_ref_cords.append(candidate_refpaths_cords[keep_traj_idx.index(n_idx)]) # append [50,2]
 
-            return ego_refpath_cords, ego_refpath_vecs, ego_vel_mode, ego_gt_traj
+
+            all_ref_path = []
+            all_ref_path.extend([candidate_refpaths_cords[gt_refpath_idx]]) # extend [[50,2]]
+            all_ref_path.extend(neighbor_ref_cords) # extend [[50,2], [50,2]] len = M
+
+            
+            # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=candidate_refpaths_cords,cand_gt_idx=gt_refpath_idx,fut_traj=ego_traj_fut_15s)
+            # plot_utils.draw_candidate_refpaths_with_his_fut(ori=ori,candidate_refpaths=all_ref_path,cand_gt_idx=0,fut_traj=ego_traj_fut_15s)
+            # ego_refpath_cords = mp_seacher.sample_points(candidate_refpaths_cords[gt_refpath_idx], num=20, return_content="points")#(20,2)
+            ego_refpath_cords = [mp_seacher.sample_points(ego_ref_cord, num=20,return_content="points") for ego_ref_cord in all_ref_path] # N[ndarray = (20,2) ...]   N=1,2,3
+            # print(ego_refpath_cords)
+            ego_refpath_vecs = mp_seacher.get_refpath_vec(ego_refpath_cords)
+            ego_refpath_cords = [transform_to_local_coords(refpath_cord, center_xy, center_heading) for refpath_cord in ego_refpath_cords]
+            ego_refpath_cords = np.asarray(ego_refpath_cords) # M,20,2    M=1,2,3
+            ego_refpath_vecs = np.asarray(ego_refpath_vecs) # M,20,2    M=1,2,3
+            ego_gt_cand = np.zeros(len(all_ref_path), dtype=np.int32) # M
+            ego_gt_cand[0] = 1
+            ego_vel_mode = np.asarray(ego_vel_mode) # 1
+            ego_gt_traj = np.asarray(ego_traj_fut_5s) # 50,2
+            ego_cand_mask = np.ones(len(all_ref_path), dtype=np.int32)
+            return ego_refpath_cords, ego_refpath_vecs, ego_gt_cand, ego_vel_mode, ego_gt_traj, ego_cand_mask
 
 
     
@@ -363,7 +381,7 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
         # candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
-        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees, keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
         valid_flag = False
         if len(candidate_refpaths_cords) == 0:
             gt_cand = np.zeros(1) #(1,)
@@ -746,7 +764,7 @@ def load_seq_save_features(index):
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
         candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
-        ego_refpath_cords, ego_refpath_vecs, ego_vel_mode, ego_gt_traj = generate_ego_future_feats(ego_info, i)
+        ego_refpath_cords, ego_refpath_vecs, ego_gt_cand, ego_vel_mode, ego_gt_traj, ego_cand_mask = generate_ego_future_feats(ego_info, i)
         
         if candidate_refpaths_cords is None or ego_refpath_cords is None:
             continue
@@ -794,10 +812,12 @@ def load_seq_save_features(index):
         feat_data['agent_mask'] = agent_masks.astype(np.int32) # [all_n,20]
         
 
-        feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (20,2)
-        feat_data['ego_refpath_vecs'] = ego_refpath_vecs.astype(np.float32) # (20,2)
-        feat_data['ego_vel_mode'] = ego_vel_mode # (1, )
-        feat_data['ego_gt_traj'] = ego_gt_traj #(50,2)
+        feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (M,20,2)
+        feat_data['ego_refpath_vecs'] = ego_refpath_vecs.astype(np.float32) # (M,20,2)
+        feat_data['ego_vel_mode'] = ego_vel_mode.astype(np.int32) # (1, )
+        feat_data['ego_gt_cand'] = ego_gt_cand.astype(np.float32) # (M, )
+        feat_data['ego_gt_traj'] = ego_gt_traj.astype(np.float32) #(50,2)
+        feat_data['ego_cand_mask'] = ego_cand_mask.astype(np.int32) # (M,)
 
         feat_data['candidate_refpaths_cords'] = pad_candidate_refpaths_cords.astype(np.float32)# all_n, max-N, 20,2
         feat_data['candidate_refpaths_vecs'] = pad_candidate_refpaths_vecs.astype(np.float32)# all_n, max-N, 20,2
@@ -844,7 +864,8 @@ if __name__=="__main__":
     cur_files = train_files
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
+    # cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
@@ -852,7 +873,7 @@ if __name__=="__main__":
     # pool = multiprocessing.Pool(processes=16)
     # pool.map(load_seq_save_features, range(len(cur_files)))
 
-    for i in range(1,len(cur_files)): # 19 error 21 draw
+    for i in range(1,2): # 19 error 21 draw
         print("--"*20, i)
     #     # my_candidate_refpath_search_test(i)
         load_seq_save_features(i)
