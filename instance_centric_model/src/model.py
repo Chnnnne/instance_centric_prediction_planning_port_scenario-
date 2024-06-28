@@ -48,10 +48,6 @@ class Model(nn.Module):
             nn.Linear(self.args.decoder_hidden_size, self.args.refpath_dim)
         )
         
-        # self.plan_net = PlanNet(
-        #     input_size=self.args.plan_input_size, 
-        #     hidden_size=self.args.d_model
-        # )
         
         self.traj_decoder = TrajDecoder(
             input_size=self.args.d_model,
@@ -100,62 +96,64 @@ class Model(nn.Module):
         map_mask = (map_polylines_mask.sum(dim=-1) > 0)  
         agent_feats, map_feat = self.fusion_net(agent_feats, agent_mask, map_feats, map_mask, rpe_feats, rpe_mask) # agent_feats [b,all_n-Max, d_agent]
         
-        # plan_traj, plan_traj_mask = batch_dict['plan_feat'].cuda(), batch_dict['plan_mask'].cuda().bool() # B,N,50,4   B,N,50
-        # agent_feats, gate = self.plan_net(agent_feats, plan_traj, plan_traj_mask) # 
         
-        candidate_refpaths_cords, candidate_refpaths_vecs, candidate_mask = batch_dict['candidate_refpaths_cords'].cuda(), batch_dict['candidate_refpaths_vecs'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,all_n-Max,Max-N-Max, 2]   [b,all_n-Max,Max-N-Max]
+        candidate_refpaths_cords, candidate_refpaths_vecs, candidate_mask = batch_dict['candidate_refpaths_cords'].cuda(), batch_dict['candidate_refpaths_vecs'].cuda(), batch_dict['candidate_mask'].cuda().bool() # [b,N,M, 20,2]   [b,N,M]
         _, agent_N, M, _, _ = candidate_refpaths_cords.shape
         refpath_feats = self.refpath_encoder(torch.cat([candidate_refpaths_cords.reshape(B,agent_N,M,-1), candidate_refpaths_vecs.reshape(B,agent_N,M,-1)],dim=-1))# B,N,M,40 +40  ->B,N,M,64
         gt_refpath = batch_dict['gt_candts'].cuda() # [b, all_n-Max, Max-N-Max]
         gt_vel_mode = batch_dict['gt_vel_mode'].cuda() # [b, all_n-Max]
+        # agent traj decoder
         cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask)
         if torch.isnan(param).any():
             print("param contain nan", param)
-        # 由贝塞尔控制点反推轨迹
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
                                            param.shape[2], -1, 2) # # B,N,3M,n_order*2 -> B, N, 3m, n_order+1, 2
         trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,3m,future_steps,2
         
-
         bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
                                                            param_with_gt.shape[1],
                                                            param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1*2 ->B, N, 1, n_order+1, 2
         traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
 
 
-        ego_refpath_cords, ego_refpath_vecs, ego_vel_mode = batch_dict['ego_refpath_cords'].cuda(), batch_dict['ego_refpath_vecs'].cuda(), batch_dict['ego_vel_mode'].cuda()
+        #B,M,20,2      B,M,20,2        B       B,M      B,M
+        ego_refpath_cords, ego_refpath_vecs, ego_vel_mode, ego_cand_mask, ego_gt_cand = batch_dict['ego_refpath_cords'].cuda(), batch_dict['ego_refpath_vecs'].cuda(), batch_dict['ego_vel_mode'].cuda(), batch_dict['ego_cand_mask'].cuda().bool(), batch_dict['ego_gt_cand'].cuda()
+        ref_M = ego_refpath_cords.shape[1]
         
-        
-        # 目标是输出自车的规划轨迹，我们需要给它提供自己的意图（也即一两个候选path）（根据5s点位于的坐标，来得到候选path）我们有了候选path，1.不用打分2.生成3条轨迹， 3.traj打分然后
-        ego_refpath_feats = self.refpath_encoder(torch.cat([ego_refpath_cords.reshape(B,-1), ego_refpath_vecs.reshape(B, -1)],dim=-1)) # B,40+40 -> B, 64
-        plan_params,  plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
-        # plan_params, plan_traj_probs, plan_param_with_gt = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode)
+        ego_refpath_feats = self.refpath_encoder(torch.cat([ego_refpath_cords.reshape(B,ref_M,-1), ego_refpath_vecs.reshape(B,ref_M, -1)],dim=-1)) # B,M,20*2 + 20*2  -> B, M, 64
+        # ego traj decoder
+        plan_cand_refpath_probs, plan_params, plan_traj_probs, plan_param_with_gt, plan_all_candidate_mask = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode, ego_cand_mask, ego_gt_cand)
+
         if torch.isnan(plan_params).any():
             print("param contain nan", param)
         
-        plan_bcp = plan_params.view(plan_params.shape[0], plan_params.shape[1], -1, 2) # B,3,(n_order+1)*2 -> B, 3, (n_order+1), 2
-        plan_trajs = torch.matmul(self.mat_T, plan_bcp) # B,3,50,2
+        plan_bcp = plan_params.view(plan_params.shape[0], plan_params.shape[1], -1, 2) # B,3M,(n_order+1)*2 -> B, 3M, (n_order+1), 2
+        plan_trajs = torch.matmul(self.mat_T, plan_bcp) # B,3M,50,2
 
         plan_bcp_with_gt = plan_param_with_gt.view(plan_param_with_gt.shape[0], -1, 2) # B,(n_order+1)*2 -> B,(n_order+1),2 
         plan_traj_with_gt = torch.matmul(self.mat_T, plan_bcp_with_gt) # B, 50, 2
+        
         if self.args.train_part == "front":
             scores, weights = None, None
         else: # back joint
-            scores, weights = self.scorer(plan_trajs.clone(), plan_params.clone(), agent_feats[:,0,:], trajs.clone(), param.clone(), traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
+            scores, weights = self.scorer(plan_trajs.clone(), plan_params.clone(), agent_feats[:,0,:], trajs.clone(), param.clone(), traj_probs, agent_polylines[:,:,-1,:], all_candidate_mask,plan_all_candidate_mask, agent_polylines_mask[:,:,-1], batch_dict['agent_vecs'].cuda(), batch_dict['agent_ctrs'].cuda(),self.mat_T)# B,3  B,8
 
         res = {"cand_refpath_probs": cand_refpath_probs, # B,N,M
-                "traj_with_gt": traj_with_gt,#B,N,1,50,2
                 "trajs": trajs, # B,N,3M,50,2
                 "param":param, #B,N,3M,(n_order+1)*2
                 "traj_probs": traj_probs, # B,N,3M
+                "traj_with_gt": traj_with_gt,#B,N,1,50,2
                 "all_candidate_mask":all_candidate_mask, # B,N,3M
-                "plan_trajs":plan_trajs, # B,3,50,2
-                "plan_params":plan_params, # B,3,(n_order+1)*2
-                # "plan_traj_probs":plan_traj_probs, # B,3
+                
+                "plan_cand_refpath_probs":plan_cand_refpath_probs, # B,M
+                "plan_trajs":plan_trajs, # B,3M,50,2
+                "plan_params":plan_params, # B,3M,(n_order+1)*2
+                "plan_traj_probs":plan_traj_probs, # B,3M
                 "plan_traj_with_gt":plan_traj_with_gt, # B, 50, 2
-                "scores":scores, # B,3
-                "weights":weights
+                "plan_all_candidate_mask":plan_all_candidate_mask,# B,3M
+                "scores":scores, # B,3M
+                "weights":weights # B,8
         }  
         # check_for_nan_in_dict(res)
         return res
@@ -206,14 +204,22 @@ class Model(nn.Module):
         对于打分模块，由于是分阶段训练，因此front阶段计算的ego的指标，都是三条平均的ade、fde、jerk
         '''
         pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B,N,M-> B,N
-        # 计算目标点有关的指标
+        #######################################################################################
+        # 预测指标
+        #######################################################################################
+        T, D = 50, 2
+        M = output_dict['param'].shape[2]
+        batch_size, N = pred_mask.shape
+        order = self.args.bezier_order + 1
+        t_values = torch.linspace(0,1,50).cuda()
+        k=3
+
         target_top = 0
         gt_prob = input_dict['gt_candts'].cuda()[pred_mask]# B,N,M -> S,M
         if gt_prob.dim() == 3:
             gt_prob = gt_prob.squeeze(dim=-1)
         valid_batch_size, label_num = gt_prob.size() # S, M
         gt_label = torch.argmax(gt_prob, -1) # S,获取one-hot的idx
-        # target_prob = output_dict['target_probs'][pred_mask]
         target_prob = output_dict['cand_refpath_probs'][pred_mask] # B,N,M -> S,M
         
         max_probs, max_indices = torch.max(target_prob, dim=1) # S
@@ -221,77 +227,112 @@ class Model(nn.Module):
         for i in range(valid_batch_size):
             if gt_label[i] ==max_indices[i]:
                 target_top += 1
-        '''   
-        target_gt = input_dict["gt_preds"].cuda()[pred_mask][:, -1, :2]# B, N, 50, 2 -> S, 50, 2 -> S, 2
-        target_candidate = input_dict["tar_candidate"].cuda()[pred_mask] # B, N, M, 2 -> S, M, 2
-        offset = output_dict['pred_offsets'][pred_mask] # B,N,M,2 -> S,M,2
-        target_pred = target_candidate[torch.arange(batch_size), max_indices] + offset[torch.arange(batch_size), max_indices]# S,2
-        # endpoint_pred = output_dict['trajs'].cuda()[pred_mask][:,:,-1,:2] #  B,N,m,future_steps,2 -> S,m,future_steps,2 -> S,M,2
-        # endpoint_pred = endpoint_pred[torch.arange(batch_size), max_indices] # S,2
-
-        # 计算target的FDE
-        rmse = torch.linalg.norm(target_pred - target_gt, dim=-1)# S,
-        target_fde = torch.sum(rmse)
-        '''
         # 计算轨迹有关的指标
-        score = output_dict['traj_probs'][pred_mask] # B, N, 3M -> S, 3M
-        traj_max_probs, traj_max_indices = torch.max(score, dim=1) # S
+
+        param = output_dict['param'][pred_mask].reshape(valid_batch_size, M,order, 2) # B,N,3M,(n+1)*2,    S,3M,(n+1)*2 =>  S,3M,(n+1), 2 
+        traj_probs = output_dict['traj_probs'][pred_mask] # B, N, 3M -> S, 3M
         trajs = output_dict['trajs'][pred_mask] # B, N, 3M, 50, 2 -> S, 3M, 50, 2
-        traj_pred = trajs[torch.arange(valid_batch_size), traj_max_indices] # S, 50, 2 得到得分最高的轨迹和真值计算指标
-        # traj_pred = trajs[torch.arange(batch_size), traj_max_indices].view(batch_size, 50, 2) 
-        traj_gt = input_dict["gt_preds"].cuda()[pred_mask]# B N 50 2 -> S 50 2
-        
-        # 计算traj的ADE
-        squared_distance = torch.sum((traj_pred - traj_gt) ** 2, dim=2) # S,50
-        distance = torch.sqrt(squared_distance)# S,50
-        traj_ade = torch.mean(distance, dim=1).sum() # S -> 1
-       
-        # 计算tarj的FDE
-        fde =  torch.linalg.norm(traj_pred[:, -1, :] - traj_gt[:, -1, :], dim=-1) # S,2 - S,2    norm -> S
-        traj_fde = torch.sum(fde)# S->1
+        traj_gt = input_dict["gt_preds"].cuda()[pred_mask].unsqueeze(1) # B N 50 2 -> S,1,50,2
 
-        # 计算MR
-        missing_num = torch.sum(fde > 3) # 1
-        
-        # 计算Jerk
-        param = output_dict['param'][pred_mask][torch.arange(valid_batch_size), traj_max_indices].reshape(valid_batch_size,self.args.bezier_order+1,2) # #B,N,3M,(n_order+1)*2 ->S,3M,(n_order+1)*2 -> S,(n_order+1),2
-        vec_param = bezier_derivative(param) # S,n_order,2
-        acc_param = bezier_derivative(vec_param) # S, n_order-1, 2
-        jerk_param = bezier_derivative(acc_param) # S, n_order-2, 2
-        t_values = torch.linspace(0,1,20).cuda()
-        jerk_vector = bezier_curve(jerk_param,t_values)/5 # S,20,2
-        jerk_scaler = torch.linalg.norm(jerk_vector,dim=-1) # S,20
-        RMS_jerk = torch.sqrt(torch.mean(jerk_scaler**2, dim=-1)) # S 
-        RMS_jerk = torch.sum(RMS_jerk)# S->1
 
-        # 计算自车指标
-        # ADE、FDE、MR、Jerk
-        ego_gt_traj = input_dict['ego_gt_traj'].cuda() # B,50,2
-        batch_size,_,_ = ego_gt_traj.shape
-        plan_trajs = output_dict['plan_trajs'] # B,3,50,2
-        plan_param = output_dict['plan_params'].reshape(batch_size, 3, self.args.bezier_order+1, 2) # B,3,(n+1),2
+        traj_topk_indices = traj_probs.topk(k=3, dim=-1).indices # S,K
+        topk_trajs = trajs.gather(1, traj_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,K,50,2
+        topk_param = param.gather(1, traj_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# S,K,(n+1),2
+
+        traj_top1_indices = traj_probs.topk(k=1, dim=-1).indices #S,1
+        top1_trajs = trajs.gather(1, traj_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,1,50,2
+        top1_param = param.gather(1, traj_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# S,1,(n+1),2
+        
+        _, mink_traj_ade = get_minK_ade(topk_trajs, traj_gt) # 1
+        _, min1_traj_ade = get_minK_ade(top1_trajs, traj_gt) # 1
+        mink_fde_part, mink_fde = get_minK_fde(topk_trajs, traj_gt)
+        min1_fde_part, min1_fde = get_minK_fde(top1_trajs, traj_gt)
+        mink_mr = get_minK_mr(mink_fde_part)
+        min1_mr = get_minK_mr(min1_fde_part)
+        mink_jerk = get_minK_jerk(topk_param,t_values)
+        min1_jerk = get_minK_jerk(top1_param,t_values)
+
+        # 计算curvature、lateral
+
+        # 计算pred_agent_yaw、 agent_gt_yaw
+        mink_ahe = get_minK_ahe(topk_trajs, traj_gt) # S,K,50,2    S,1,50,2    -> 1
+        min1_ahe = get_minK_ahe(top1_trajs, traj_gt)
+        mink_fhe = get_minK_fhe(topk_trajs, traj_gt)
+        min1_fhe = get_minK_fhe(top1_trajs, traj_gt)
+        
+        #######################################################################################
+        # 规划指标
+        #######################################################################################
+
+        ego_gt_traj = input_dict['ego_gt_traj'].unsqueeze(1).cuda() # B,1,50,2
+        plan_trajs = output_dict['plan_trajs'] # B,3M,50,2
+        plan_param = output_dict['plan_params'].reshape(batch_size, 3, self.args.bezier_order+1, 2) # B,3M,(n+1),2
+        
 
         if output_dict['scores'] != None:
-            # 计算min ade fde ...
-            scores = output_dict['scores'] # B,3
-            score_max_indices = torch.argmax(scores, dim=-1) # B
-            plan_traj_best = plan_trajs[torch.arange(batch_size), score_max_indices] # B,50,2
-            # ade
-            plan_ade = torch.sum(torch.mean(torch.linalg.norm(plan_traj_best - ego_gt_traj,dim=-1),dim=-1)) # B,50,2 -> B,50->B->1
-            # fde
-            plan_fde = torch.linalg.norm(plan_traj_best[:,-1,:] - ego_gt_traj[:,-1,:], dim = -1)# B,2 -> B
-            plan_fde_sum = torch.sum(plan_fde) # B -> 1
-            # mr
-            plan_missing_num = torch.sum(plan_fde>3)
-            # jerk
-            plan_param = plan_param[torch.arange(batch_size), score_max_indices]# B,3,(n_order+1),2 -> B,n_order+1,2
-            plan_vec_param = bezier_derivative(plan_param) # B,n_order,2
-            plan_acc_param = bezier_derivative(plan_vec_param) # B, n_order-1, 2
-            plan_jerk_param = bezier_derivative(plan_acc_param) # B, n_order-2, 2
-            plan_jerk_vector = bezier_curve(plan_jerk_param,t_values)/5 # B,20,2
-            plan_jerk_scaler = torch.linalg.norm(plan_jerk_vector,dim=-1) # B,20
-            plan_RMS_jerk = torch.sqrt(torch.mean(plan_jerk_scaler**2, dim=-1)) # B
-            plan_RMS_jerk = torch.sum(RMS_jerk)# B->1
+            plan_cost = output_dict['scores'] # B,3M
+            min_val = plan_cost.min(dim=-1).values.unsqueeze(-1) # B
+            max_val = plan_cost.max(dim=-1).values.unsqueeze(-1) # B
+            plan_cost = (plan_cost - min_val)/(max_val - min_val) # B,3M / B,1
+            plan_supl = output_dict['plan_traj_probs'] # B,3M
+            plan_scores = plan_supl * plan_cost #B,3M
+
+
+        elif "plan_traj_probs" in output_dict:
+            plan_scores = output_dict['plan_traj_probs'] # B,3M
+            
+        score_topk_indices = torch.topk(plan_scores, k=k, dim=-1).indices # B,3M -> B,K
+        plan_topk_traj = plan_trajs.gather(1, score_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D)) # B,3M,50,2 -> B,K,50,2
+        plan_topk_param = plan_param.gather(1, score_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# B,3M,n+1,2->B,K,n+1,2
+        
+        score_top1_indices = torch.topk(plan_scores, k=1, dim=-1).indices # B,1,
+        plan_top1_traj = plan_trajs.gather(1, score_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D)) # B,3M,50,2 ->  B,1,50,2
+        plan_top1_param = plan_param.gather(1, score_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# ->B,1,n+1,2
+        #ade
+        plan_mink_ade_part, plan_mink_ade = get_minK_ade(plan_topk_traj, ego_gt_traj) # B,   1
+        plan_min1_ade_part, plan_min1_ade = get_minK_ade(plan_top1_traj, ego_gt_traj)
+        #fde
+        plan_mink_fde_part, plan_mink_fde = get_minK_fde(plan_topk_traj, ego_gt_traj)
+        plan_min1_fde_part, plan_min1_fde = get_minK_fde(plan_top1_traj, ego_gt_traj)
+        # mr
+        plan_mink_missing_num = get_minK_mr(plan_mink_fde_part)
+        plan_min1_missing_num = get_minK_mr(plan_min1_fde_part)
+        # jerk
+        plan_mink_RMS_jerk = get_minK_jerk(plan_topk_param,t_values) 
+        plan_min1_RMS_jerk = get_minK_jerk(plan_top1_param,t_values) 
+        # collision 指标
+        agent_vecs = input_dict['agent_vecs'].cuda() # B,N,2
+        agent_ctrs = input_dict['agent_ctrs'].cuda() # B,N,2
+        transforms = get_transform(agent_vecs) # B,N,2 -> B,N,2,2
+        plan_top1_traj_transform = transform_to_ori(plan_top1_traj, transforms[:,0,:,:], agent_ctrs[:,0,:]).squeeze(1) # B,1,50,2 + B,2,2 + B,2-> B,50,2
+        top1_trajs_transofrm = transform_to_ori(top1_trajs, transforms[pred_mask], agent_ctrs[pred_mask]).squeeze(1) # S,1,50,2  + S,2,2 + S,2 -> S,50,2
+
+        plan_top1_traj_transform_mask = plan_top1_traj_transform.unsqueeze(1).repeat(1,N,1,1)[pred_mask] # B,50,2 -> B,N,50,2 -> S,50,2
+        agent_min_dist = torch.linalg.norm(plan_top1_traj_transform_mask - top1_trajs_transofrm, dim=-1).min(dim=-1).values # S,50,2 -> S,50->S
+        risk_num = torch.sum(agent_min_dist < 8)
+        agent_dist = agent_min_dist.sum(-1)
+        
+        # curvature/lateral
+        plan_vec_param = bezier_derivative(plan_top1_param) # B,1,n+1,2 -> B,1,n,2
+        plan_vec_vectors = bezier_curve(plan_vec_param, t_values)/5 # B,1,n_order,2 -> B,1,50,2
+        plan_vec_scaler = torch.linalg.norm(plan_vec_vectors, dim=-1) # B,1,50
+
+        plan_acc_param = bezier_derivative(plan_vec_param) # B,1,n-1, 2
+        plan_acc_vectors = bezier_curve(plan_acc_param, t_values)/25 # B, 1,n_order-1,2 -> B,1,50,2
+
+        plan_vx, plan_vy = plan_vec_vectors[...,0], plan_vec_vectors[...,1]# B,1,50
+        plan_ax, plan_ay = plan_acc_vectors[...,0], plan_acc_vectors[...,1]
+        epsilon = 1e-4
+        plan_curvature = torch.abs(plan_vx * plan_ay - plan_vy * plan_ax)/((plan_vx**2 + plan_vy**2+epsilon)**1.5) #B,1,50
+        plan_lateral_acceleration = (plan_vec_scaler**2 * plan_curvature).mean(-1).min(dim=-1).values.sum(-1)
+        plan_curvature = plan_curvature.mean(-1).min(dim=-1).values.sum()# 1
+
+        # ahe/fhe
+        plan_min1_ahe = get_minK_ahe(plan_top1_traj,ego_gt_traj)
+        plan_min1_fhe = get_minK_fhe(plan_top1_traj,ego_gt_traj)
+
+
+        '''
         else:
             # 计算 mean ade fde ...
             # mean ade
@@ -305,21 +346,166 @@ class Model(nn.Module):
             plan_vec_param = bezier_derivative(plan_param) # B,3,n_order,2
             plan_acc_param = bezier_derivative(plan_vec_param) # B,3, n_order-1, 2
             plan_jerk_param = bezier_derivative(plan_acc_param) # B,3, n_order-2, 2
-            plan_jerk_vector = bezier_curve(plan_jerk_param,t_values)/5 # B,3,20,2
+            plan_jerk_vector = bezier_curve(plan_jerk_param,t_values)/(5**3) # B,3,20,2
             plan_jerk_scaler = torch.linalg.norm(plan_jerk_vector,dim=-1) # B,3,20
             plan_RMS_jerk = torch.sqrt(torch.mean(plan_jerk_scaler**2, dim=-1)) # B,3
             plan_RMS_jerk = torch.sum(torch.mean(RMS_jerk,dim=-1))# B,3->B->1
+        '''
+
+        metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
+                      "target_top":(target_top, 1), "mink_traj_ade":(mink_traj_ade,1), "min1_traj_ade":(min1_traj_ade,1), 
+                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
+                      "mink_jerk": (mink_jerk,1), "min1_jerk":(min1_jerk,1), "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
+                      
+                      "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
+                      "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), 
+                      "plan_mink_missing_num":(plan_mink_missing_num, 2),"plan_min1_missing_num":(plan_min1_missing_num,2),
+                      "plan_mink_RMS_jerk":(plan_mink_RMS_jerk,2),"plan_min1_RMS_jerk":(plan_min1_RMS_jerk,2), 
+                      "risk_num":(risk_num,2),"agent_dist":(agent_dist,2),
+                      "plan_curvature":(plan_curvature,2),"plan_lateral_acceleration":(plan_lateral_acceleration,2),
+                      "plan_min1_ahe":(plan_min1_ahe,2),"plan_min1_fhe":(plan_min1_fhe,2)}
+        return metric_dict
+
+def get_yaw(traj):
+    '''
+    traj:B,N,T,2 B个agent N条轨迹
+    '''
+    vec_vector = torch.diff(traj, dim=-2) #  B,N,T-1,2
+    yaw = torch.atan2(vec_vector[...,1],vec_vector[...,0]) # B,N,T-1
+    return yaw
+
+def get_minK_ahe(proposed_traj,gt_traj):
+    '''
+    input:
+        - proposed_traj B,W不定,50,2
+        - gt_traj B,1,50,2
+    return 
+        - ahe B,W,49 - B,1,49  -> B,W,49 -> B,W -> B -> sum
+    '''  
+    traj_yaw = get_yaw(proposed_traj) # B,W,49
+    gt_yaw = get_yaw(gt_traj) # B,1,49
+    yaw_diff = torch.abs(principal_value(traj_yaw - gt_yaw)).mean(-1).min(dim=-1).values.sum(-1) 
+    return yaw_diff
+
+def get_minK_fhe(proposed_traj, gt_traj):
+    '''
+    input:
+        - proposed_traj B,W不定,50,2
+        - gt_traj B,1,50,2
+    return:
+        - afe:B    B,W,49 - B,1,49  -> B,W,49, -> B,W -> B -> sum
+
+    '''  
+    traj_yaw = get_yaw(proposed_traj) # B,W,49
+    gt_yaw = get_yaw(gt_traj) # B,1,49
+    yaw_diff = torch.abs(principal_value(traj_yaw - gt_yaw))[...,-1].min(dim=-1).values.sum(-1) 
+    return yaw_diff
+
+def get_minK_ade(proposed_traj,gt_traj):
+    '''
+    求预测的轨迹（每个agent有W条）和真值轨迹（1条）的最小ade
+    input:
+        - proposed_traj B,W不定,50,2
+        - gt_traj B,1,50,2
+    return:
+        - ade_part:B    B,W,50,2 - B,1,50,2 -> B,W,50 -> B,W -> B, 
+        - ade:1    B->1 
+    '''
+    ade_part = torch.linalg.norm(proposed_traj - gt_traj,dim=-1).mean(-1).min(dim=-1).values
+    ade = ade_part.sum(-1)
+    return ade_part,ade
+
+def get_minK_fde(proposed_traj, gt_traj):
+    '''
+    求预测的轨迹（每个agent有W条）和真值轨迹（1条）的最小fde
+    input:
+        - proposed_traj B,W不定,50,2
+        - gt_traj B,1,50,2
+    return:
+        - fde_part:B    B,W,2 - B,1,2 -> B,W -> B
+        - fde:1       B->1
+    '''
+    fde_part = torch.linalg.norm(proposed_traj[:,:,-1,:] - gt_traj[:,:,-1,:], dim=-1).min(dim=-1).values
+    fde = fde_part.sum(-1)
+    return fde_part, fde
+def get_minK_mr(fde_part, dis=3):
+    '''
+    求预测轨迹（每个agent有W条）和真值轨迹（每个agent1条）的最小fde是否大于dis（）
+    input: fde_part : B
+    '''
+    return (fde_part > dis).sum(-1)
+
+def get_minK_jerk(param, t_values):
+    '''
+    param: [B,W,n+1, 2]
+    '''
+    plan_vec_param = bezier_derivative(param) # B,W, n_order,2
+    plan_acc_param = bezier_derivative(plan_vec_param) # B, W,n_order-1, 2
+    plan_jerk_param = bezier_derivative(plan_acc_param) # B,W, n_order-2, 2
+    plan_jerk_vector = bezier_curve(plan_jerk_param,t_values)/(5**3) # B,W, 20,2
+    plan_jerk_scaler = torch.linalg.norm(plan_jerk_vector,dim=-1) # B,W, 20
+    plan_RMS_jerk = torch.sqrt(torch.mean(plan_jerk_scaler**2, dim=-1)).min(dim=-1).values # B,W,20 -均方根-> B,W->B
+    plan_RMS_jerk = torch.sum(plan_RMS_jerk)# B->1
+    return plan_RMS_jerk
+
+def get_transform(agent_vecs):
+    # B,N,2
+    # B,N,2,2
+    B, N, _ = agent_vecs.shape
+    cos_, sin_ = agent_vecs[:,:,0], agent_vecs[:,:,1] # B,N
+    rot_matrix = torch.zeros(B, N, 2, 2, device=agent_vecs.device)
+    rot_matrix[:,:,0,0] = sin_
+    rot_matrix[:,:,0,1] = cos_
+    rot_matrix[:,:,1,0] = -cos_
+    rot_matrix[:,:,1,1] = sin_
+    # one = torch.cat([sin_,cos_], dim=-1).unsqueeze(-2) # B,N,1,2
+    # two = torch.cat([-cos_, sin_], dim= -1).unsqueeze(-2) # B,N,1,2
+    return rot_matrix
 
 
+def transform_to_ori(origin_feat, transforms, ctrs, mask = None):
+    '''
+    feat: B,N,M,50,2 or B,3,50,2 or B,1,50,2
+    transforms: B,N,2,2 or B,2,2
+    ctrs: B,N,2
+    mask : B,N,3m,
+    '''
+    feat = origin_feat.clone()
+    squeeze_one_flag = False
+    if len(feat.shape) == 4:
+        squeeze_one_flag = True
+        feat = feat.unsqueeze(1) # B,1,3,50,2
+        transforms = transforms.unsqueeze(1) # B,1,2,2
+        ctrs = ctrs.unsqueeze(1) # B,1,2
+    # B,N,M,50,2
+    rot_inv = transforms.transpose(-2, -1) 
+    feat[..., 0:2] = torch.matmul(feat[..., 0:2], rot_inv[:,:,None,:,:]) + ctrs[:,:,None,None,:] # B,N,M,50,2@B,N,1,2,2 + B,N,1,1,2
+    if squeeze_one_flag:
+        feat = feat.squeeze(1)
+    if mask != None:
+        B,N,M,T,D = feat.shape
+        mask = (~mask.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,-1,T,D))
+        feat = feat.masked_fill(mask,0.0)
+    return feat
 
-             
-        
 
-
-        return valid_batch_size, target_top, traj_ade, traj_fde, missing_num, RMS_jerk, batch_size, plan_ade, plan_fde_sum, plan_missing_num, plan_RMS_jerk
-    
 # 函数检查dict中是否存在包含NaN的tensor
 def check_for_nan_in_dict(data_dict):
     for key, value in data_dict.items():
         if torch.isnan(value).any():
             print(f"NaN found in tensor associated with key '{key}':\n{value}")
+
+def principal_value(angle, min_= -math.pi):
+    """
+    Wrap heading angle in to specified domain (multiples of 2 pi alias),
+    ensuring that the angle is between min_ and min_ + 2 pi. This function raises an error if the angle is infinite
+    :param angle: rad
+    :param min_: minimum domain for angle (rad)
+    :return angle wrapped to [min_, min_ + 2 pi).
+    S,N,49
+    """
+    assert torch.all(torch.isfinite(angle)), "angle is not finite"
+
+    lhs = (angle - min_) % (2 * math.pi) + min_
+
+    return lhs

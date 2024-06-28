@@ -12,11 +12,12 @@ class InterDataSet(Dataset):
         random.seed(777)
         random.shuffle(self.ids)
         if set_name=="train":
-            self.ids = self.ids[:250000]
-            # self.ids = self.ids[:40]
+            # self.ids = self.ids[:250000]
+            self.ids = self.ids[:150000]
+            # self.ids = self.ids[:100]
         else:
             self.ids = self.ids[:30000]
-            # self.ids = self.ids[:30]
+            # self.ids = self.ids[:300]
         
     def __len__(self):
         return len(self.ids)
@@ -48,13 +49,13 @@ class InterDataSet(Dataset):
         for key, val_list in key_to_list.items():
             val_list = [torch.from_numpy(x) for x in val_list]
             if key in ['agent_feats', 'agent_mask', 'agent_ctrs', 'agent_vecs', 'gt_preds',
-                       'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask', 'gt_vel_mode']:
+                       'plan_feat', 'plan_mask', 'map_ctrs', 'map_vecs', 'map_feats', 'map_mask', 'gt_vel_mode', 'ego_gt_cand', 'ego_refpath_cords', 'ego_refpath_vecs', 'ego_cand_mask']:
                 input_dict[key] = self.merge_batch_1d(val_list)
             elif key in ['candidate_mask', 'gt_candts', 'rpe', 'rpe_mask']:
                 input_dict[key] = self.merge_batch_2d(val_list)
             elif key in ['candidate_refpaths_cords', 'candidate_refpaths_vecs']:
                 input_dict[key] = self.merge_batch_2d_more(val_list)
-            elif key in ['ego_vel_mode', 'ego_refpath_cords', 'ego_refpath_vecs',"ego_gt_traj"]:
+            elif key in ['ego_vel_mode', "ego_gt_traj"]:
                 input_dict[key] = torch.stack(val_list,dim=0) #(B,)
             else:
                 print(key)

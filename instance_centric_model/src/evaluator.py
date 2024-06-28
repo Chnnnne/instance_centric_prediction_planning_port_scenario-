@@ -9,8 +9,8 @@ import time
 import os
 import datetime
 import tqdm
-from parser_args import  main_parser, log_args_to_file
-
+from parser_args import  main_parser_for_evel, log_args_to_file
+from collections import defaultdict
 from utils import print_model_summary, find_trainable_layers, add_dict_prefix, formatted_time,create_logger, init_dist_pytorch, set_seed
 from src.data_loader import get_ddp_dataloader
 
@@ -165,6 +165,35 @@ class Evaluator(object):
                              'to load a model or "best" to load the best '
                              'model! Check args.load_checkpoint')
         return model_epoch
+    
+    def _load_checkpoint_eval(self, load_checkpoint):
+        """
+        Load a pre-trained model. Can then be used to test or resume training.
+        """
+        print("*"*100,"\n eval模式，加载pt文件进模型 \n","*"*100)
+        if load_checkpoint is not None:
+            print("\nSaved model path:", load_checkpoint)
+            if os.path.isfile(load_checkpoint):
+                print('Loading checkpoint ...')
+                checkpoint = torch.load(load_checkpoint,
+                                         map_location=torch.device('cpu'))
+                model_epoch = checkpoint['epoch']
+                def add_module_prefix(state_dict):
+                    new_state_dict = {}
+                    for k, v in state_dict.items():
+                        new_state_dict['module.' + k] = v
+                    return new_state_dict
+                
+                self.net.load_state_dict(
+                    add_module_prefix(checkpoint['model_state_dict']))
+                print('Loaded checkpoint at epoch', model_epoch, '\n')
+            else:
+                raise ValueError("No such pre-trained model:", load_checkpoint)
+        else:
+            raise ValueError('You need to specify an epoch (int) if you want '
+                             'to load a model or "best" to load the best '
+                             'model! Check args.load_checkpoint')
+        return model_epoch
 
     def _load_or_restart(self, train_part, pt):
         """
@@ -173,13 +202,15 @@ class Evaluator(object):
         self.args.load_checkpoint parameter.
         """
         # load pre-trained model to resume training
-        if self.args.load_checkpoint is not None:
+        if pt is not None:
             if train_part == "back":
                 loaded_epoch = self._load_and_freeze_front_checkpoint_train_back_part(pt)
             elif train_part == "front":
                 loaded_epoch = self._load_checkpoint(pt)
-            else:# joint
+            elif train_part == "joint":# joint
                 loaded_epoch = self._load_checkpoint_joint(pt)
+            else:
+                loaded_epoch = self._load_checkpoint_eval(pt)
             # start from the following epoch
             start_epoch = int(loaded_epoch) + 1
         else:
@@ -309,51 +340,46 @@ class Evaluator(object):
         在测试集上对模型进行验证，计算准确率和对应的损失
         """
         print(f"evaluate {pt}")
-        self._load_or_restart("joint", pt)
-
+        self._load_or_restart("eval", pt)
         self.net.eval()  # evaluation mode
-        total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, all_total, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk = torch.zeros(11).cuda()
-        total_it_each_epoch = len(self.data_loaders[mode])
+        res_dict = defaultdict(lambda: torch.tensor(0.0).cuda())
+
+        total_iter_each_epoch = len(self.data_loaders[mode])
         dataloader_iter = iter(self.data_loaders[mode])
-        with tqdm.trange(0, total_it_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
-            for cur_it in pbar:
+        with tqdm.trange(0, total_iter_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
+            for cur_it in pbar:# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
                 try:
                     input_dict = next(dataloader_iter)
                 except StopIteration:
                     dataloader_iter = iter(self.data_loaders['test'])
                     input_dict = next(dataloader_iter)
                 output_dict = self.net(input_dict)
-                valid_batch_size, top, t_ade, t_fde, mr, jerk, batch_size, plan_ade, plan_fde, plan_mr, plan_jerk = self.net.module.compute_model_metrics(input_dict, output_dict)
-                total += torch.tensor(valid_batch_size).cuda()
-                top_acc += torch.tensor(top).cuda()
-                traj_ade += torch.as_tensor(t_ade, device='cuda')
-                traj_fde += torch.as_tensor(t_fde, device='cuda')
-                missing_rate += torch.as_tensor(mr, device='cuda')
-                RMS_jerk += torch.as_tensor(jerk,device='cuda')
+                
+                metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
+                for key,val in metric_dict.items():
+                    res_dict[key] += torch.as_tensor(val[0],device='cuda')
 
-                all_total += torch.tensor(batch_size).cuda()
-                plan_traj_ade += torch.as_tensor(plan_ade, device='cuda')
-                plan_traj_fde += torch.as_tensor(plan_fde, device='cuda')
-                plan_missing_rate += torch.as_tensor(plan_mr, device='cuda')
-                plan_RMS_jerk += torch.as_tensor(plan_jerk,device='cuda')
 
         dist.barrier()
-        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk, all_total]:
-            dist.reduce(x, 0) # reduce并返回给进程0
+
+        for key in res_dict:
+            dist.reduce(res_dict[key], 0)
   
         if self.args.local_rank == 0:
-            top_acc = 100 * top_acc.item() / total.item()
-            traj_ade = traj_ade.item() / total.item()
-            traj_fde = traj_fde.item() / total.item()
-            missing_rate = 100 * missing_rate.item() / total.item()
-            RMS_jerk = RMS_jerk.item() / total.item()
+            for key in res_dict:
+                res_dict[key] = res_dict[key].item()
+            for key in res_dict:
+                if metric_dict[key][1] == 1:
+                    res_dict[key] = res_dict[key]/ res_dict['valid_batch_size']
+                elif metric_dict[key][1] == 2:
+                    res_dict[key] = res_dict[key]/ res_dict['batch_size']
 
-            plan_traj_ade = plan_traj_ade.item() / all_total.item()
-            plan_traj_fde = plan_traj_fde.item() / all_total.item()
-            plan_missing_rate = 100 * plan_missing_rate.item() / all_total.item()
-            plan_RMS_jerk = plan_RMS_jerk.item() / all_total.item()
+            text = f"Eval: {pt}, "
+            for key,val in res_dict.items():
+                text+=f"{key}={val:.5f},  "
 
-            self.logger.info(f'Eval: case_num={total.item()}, top_acc={top_acc:.2f}%, traj_ade={traj_ade:.5f}, traj_fde={traj_fde:.5f}, MR={missing_rate:.3f}, RMS_jerk={RMS_jerk:.5f}, plan_traj_ade={plan_traj_ade:.5f}, plan_traj_fde={plan_traj_fde:.5f}, plan_MR={plan_missing_rate:.3f}, plan_RMS_jerk={plan_RMS_jerk:.5f}')
+            self.logger.info(text)
+
             # if traj_ade < self.best_ade:
             #     self.best_ade = traj_ade
             #     self._save_checkpoint(epoch, best_epoch=True)  # save model
@@ -363,13 +389,16 @@ class Evaluator(object):
         
         
 if __name__ == "__main__":
-    args = main_parser()
+    args = main_parser_for_evel()
     total_gpus, args.local_rank = init_dist_pytorch(args.local_rank, backend='nccl')
     if args.reproducibility:
         set_seed(seed_value=7777)
-    pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-23 12:47:19_back/saved_models/"
+    # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-25 11:30:09_front/saved_models"
+    pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-26 20:44:41_back/saved_models/"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
+    pts = pts[::-1]
+    pts = [pt for pt in pts if pt.count('020') > 0]
     log_file = args.log_dir + "/log_train_%s.txt"%datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     logger = create_logger(log_file, args.local_rank)
     log_args_to_file(args, logger)

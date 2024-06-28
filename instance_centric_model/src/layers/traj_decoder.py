@@ -27,50 +27,6 @@ class TrajDecoder(nn.Module):
 
         # 可学习的速度嵌入向量
         self.vel_emb = nn.Parameter(torch.Tensor(1, 1, 3, embed_dim))
-        # self.accelerate_embedding = nn.Parameter(torch.randn(1))# (32, )
-        # self.constant_speed_embedding = nn.Parameter(torch.randn(1))
-        # self.decelerate_embedding = nn.Parameter(torch.randn(1))
-    '''
-    # def vis_debug(self, candidate_refpaths_cords,candidate_refpaths_vecs,gt_refpath, candidate_mask, batch_dict):
-    #     pred_mask = (candidate_mask.sum(dim=-1) > 0).cuda() # B,N,M->B, N  仅标志哪个agent是有效的，不标志refpath有效
-    #     idx_mask = candidate_mask.sum(dim=-1).cuda() # B,N,M->B, N  
-    #     idx_mask = idx_mask[pred_mask] # S
-
-    #     agent_hiss = batch_dict['agent_feats'][pred_mask][:,:,:2] # B,N,20,13, -> S, 20, 2
-    #     oris = batch_dict['agent_ctrs'][pred_mask] # B,N,2 -> S,2
-    #     refpath_cords = candidate_refpaths_cords[pred_mask] #B,N,M,20,2 -> S, M, 20, 2
-    #     gt_preds = batch_dict['gt_preds'][pred_mask]# B,N,50,2 -> S, 50, 2
-
-
-    #     gt_idx = gt_refpath[pred_mask] # S,M
-    #     gt_idx = torch.argmax(gt_idx,axis = 1)#S
-    #     S = refpath_cords.shape[0]
-    #     import sys
-    #     sys.path.append("/data/wangchen/instance_centric")
-    #     print(sys.path)
-    #     import common.plot_utils as plot_utils
-    #     import pickle
-    #     for i in range(S):
-    #         tmp_dict = {"ori":oris[i], "candidate_refpaths":refpath_cords[i,:idx_mask[i]],"cand_gt_idx":gt_idx[i],"his_traj": agent_hiss[i],"fut_traj":gt_preds[i] }
-    #         save_path = "/data/wangchen/instance_centric/tmp" + f'/{i}_{1}.pkl'
-    #         with open(save_path, 'wb') as f:
-    #             pickle.dump(tmp_dict, f)
-    #             print("$"*80)
-    #         # plot_utils.draw_candidate_refpaths_with_his_fut(oris[i],candidate_refpaths=refpath_cords[i,:idx_mask[i]],
-    #         #                                                 cand_gt_idx=gt_idx[i],his_traj=agent_hiss[i],fut_traj=gt_preds[i])
-    #         print("draw one")
-
-    #     print("finish vis debug")
-    #     exit()
-    #     # B = oris.shape[0]
-    #     # for idx in range(B):
-    #     #     his = agent_hiss[idx] # N, 20, 2
-    #     #     ori = oris[idx] # N, 2
-    #     #     refpath_cords = candidate_refpaths_cords[idx] # 
-    #     #     refpath_vecs = candidate_refpaths_vecs[idx]
-    #     #     gt_ref = gt_refpath[idx]
-    #     #     mask = candidate_mask[idx]
-    '''
 
 
     def forward(self, feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask=None):
@@ -109,17 +65,10 @@ class TrajDecoder(nn.Module):
         cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
 
         # [B,N,M, D + 64+ embed]   *  3
-        # accelerate_combined = torch.cat([feats_cand, self.accelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        # constant_speed_combined = torch.cat([feats_cand, self.constant_speed_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        # decelerate_combined = torch.cat([feats_cand, self.decelerate_embedding.unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(B,N,M,1)],dim=-1)
-        # accelerate_combined = feats_cand.clone() # B,N,M,D+64
-        # constant_speed_combined = feats_cand.clone()
-        # decelerate_combined = feats_cand.clone()
-        
+
         # 2. 根据refpath生成traj
         param_input = torch.cat([feats_cand.repeat_interleave(repeats=3,dim=2),self.vel_emb.repeat(B,N,M,1)], dim=-1)# B,N,3m,D+64+emd_dim
-        # param_input = torch.cat([accelerate_combined,constant_speed_combined,decelerate_combined], dim=2)
-        # param_input = feats_cand # BNM, D+64
+
         param = self.motion_estimator_layer(param_input) # B,N,3M,(n_order+1)*2 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
 
 
@@ -131,14 +80,7 @@ class TrajDecoder(nn.Module):
         
         # 预测轨迹(teacher_force)
         param_with_gt = param[all_gt_refpath==1].unsqueeze(1).reshape(B,N,1,-1) #  B,N,3M,(n_order+1)*2 -> [B*N, (n_order+1)*2] -> [B,N,1,(n_order+1)*2]
-        # gt_idx = (torch.argmax(gt_refpath, dim=-1)*3+gt_vel_mode.detach() - 1).unsqueeze(-1)  #  B, N, M -> B, N标志哪一个是gt refpath -> *3+gt_vel_mode - 1标志哪一个是包含速度信息的gt path-> B,N,1
-        # gt_idx = gt_idx.clamp(min=0).unsqueeze(-1).expand(-1,-1,-1, param.size(3)) # B, N, 1, (n_order+1)*2
-
-        # param_with_gt = torch.gather(param, dim=2, index=gt_idx)#    # B,N,3M,(n_order+1)*2     -> B, N, 1, (n_order+1)*2    
-        
-
-
-
+  
         return cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask
     
     def forward_origin(self, feats, tar_candidate, target_gt, candidate_mask=None):

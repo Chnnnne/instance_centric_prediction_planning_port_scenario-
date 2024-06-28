@@ -314,7 +314,8 @@ class Trainer(object):
                 learning_rate = self.optimizer.param_groups[0]['lr']
                 
             # 验证
-            if cur_epoch >= self.args.start_validation and cur_epoch % self.args.validate_every == 0:
+            # if cur_epoch >= self.args.start_validation and cur_epoch % self.args.validate_every == 0:
+            if False:
             # if True:
                 torch.cuda.empty_cache()
                 self._evaluate_epoch(cur_epoch, mode='test')
@@ -322,8 +323,8 @@ class Trainer(object):
     # 单个epoch的训练
     def _train_epoch(self, epoch):
         self.net.train()
-        # losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "plan_score_loss":0,"irl_loss":0,"weights_regularization":0}
-        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "irl_loss":0,"weights_regularization":0}
+        losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_ref_cls_loss":0, "plan_reg_loss":0, "plan_score_loss":0,"irl_loss":0,"weights_regularization":0}
+        # losses_epoch = {"loss":0, "ref_cls_loss": 0, "traj_loss": 0, "score_loss": 0, "plan_reg_loss":0, "irl_loss":0,"weights_regularization":0}
         total_it_each_epoch = len(self.data_loaders['train'])
         dataloader_iter = iter(self.data_loaders['train'])
         with tqdm.trange(0, total_it_each_epoch, desc='train_epoch', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
@@ -343,10 +344,10 @@ class Trainer(object):
                 losses_epoch["ref_cls_loss"] += loss_dict["ref_cls_loss"].detach().item()
                 losses_epoch["traj_loss"] += loss_dict["traj_loss"].detach().item()
                 losses_epoch["score_loss"] += loss_dict["score_loss"].detach().item()
-                # if "safety_loss" in loss_dict:
-                #     losses_epoch["safety_loss"] += loss_dict["safety_loss"].detach().item()
+
+                losses_epoch['plan_ref_cls_loss'] += loss_dict['plan_cls_loss'].detach().item()
                 losses_epoch["plan_reg_loss"] += loss_dict["plan_reg_loss"].detach().item()
-                # losses_epoch["plan_score_loss"] += loss_dict["plan_score_loss"].detach().item()
+                losses_epoch["plan_score_loss"] += loss_dict["plan_score_loss"].detach().item()
                 losses_epoch["irl_loss"] += loss_dict["irl_loss"].detach().item()
                 losses_epoch["weights_regularization"] += loss_dict["weights_regularization"].detach().item()
 
@@ -392,7 +393,7 @@ class Trainer(object):
                 plan_RMS_jerk += torch.as_tensor(plan_jerk,device='cuda')
 
         dist.barrier()
-        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk]:
+        for x in [total, top_acc, traj_ade, traj_fde, missing_rate, RMS_jerk, plan_traj_ade, plan_traj_fde, plan_missing_rate, plan_RMS_jerk, all_total]:
             dist.reduce(x, 0) # reduce并返回给进程0
   
         if self.args.local_rank == 0:

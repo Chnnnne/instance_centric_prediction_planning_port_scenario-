@@ -235,6 +235,7 @@ def bezier_curve(control_points, t_values):
         - control_points   B,3,(n_order+1), 2
         - control_points   B,N,3m,(n_order+1), 2
     return: 
+        - curve_points  B, 50, 2
         - curve_points  B,3,50, 2
         - curve_points  B,N,3m,50, 2
     '''

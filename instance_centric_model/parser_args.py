@@ -16,10 +16,10 @@ def get_parser():
         '--model_name', '-mn', default='MODEL', type=str,
         choices=['MODEL'], help='Type of architecture to use')
     parser.add_argument(
-        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data/', type=str,
+        '--dataset_dir', '-dd', default=f'/private/wangchen/instance_model/instance_model_data_new_version/', type=str,
         help='Set the parent dir of train data and valid data')
     parser.add_argument(
-        '--batch_size', '-bs', default=8, type=int, help='number of batch size')
+        '--batch_size', '-bs', default=2, type=int, help='number of batch size')
     parser.add_argument(
         '--workers', type=int, default=32, help='number of workers for dataloader')
     parser.add_argument(
@@ -46,7 +46,11 @@ def get_parser():
              'pre-trained model')
     parser.add_argument(
         '--num_epochs', '-ne', default=50, type=int, help='number of epochs to train for')
-    parser.add_argument('--train_part', '-tp', default="joint", type=str, help="front/back/joint")
+    
+    parser.add_argument(
+        '--base_dir', '-bd', default="/private/wangchen/instance_model/", type=str, help='the base dir to store log/MODEL/tb')
+    
+    parser.add_argument('--train_part', '-tp', default="back", type=str, help="front/back/joint")
     
     # train front part
     # parser.add_argument(
@@ -55,7 +59,7 @@ def get_parser():
     #          "the epoch to load or 'best' to load the best model. Default=None "
     #          "means do not load any model.")
     parser.add_argument(
-    '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output/MODEL/2024-06-23 12:47:19_back/saved_models/MODEL_epoch_020.pt", type=str,
+    '--load_checkpoint', '-lc', default="/private/wangchen/instance_model/output/MODEL/2024-06-28 09:59:03_front/saved_models/MODEL_epoch_005.pt", type=str,
     help="Load pre-trained model for testing or resume training. Specify "
             "the epoch to load or 'best' to load the best model. Default=None "
             "means do not load any model.")
@@ -65,7 +69,7 @@ def get_parser():
         help="Save model weights and outputs every save_every epochs.")
     
     parser.add_argument(
-        '--start_validation', default=5, type=int,
+        '--start_validation', default=10, type=int,
         help="Validate the model starting from this epoch")
     # 1 for slow but accurate results, 20 for fast results
     parser.add_argument(
@@ -145,7 +149,7 @@ def check_and_add_additional_args(args):
     
     import common.time_utils as time_utils
     # 定义各种保存路径
-    args.base_dir = '/private/wangchen/instance_model/'          
+    # args.base_dir = '/private/wangchen/instance_model/'          
     args.save_base_dir = 'output' # 用于保存输出和模型来的目录
     args.save_dir = os.path.join(args.base_dir, args.save_base_dir) # output
     base_time = time_utils.get_cur_time_string()
@@ -213,7 +217,29 @@ def main_parser():
     #     parsed_args = load_args(parser, parsed_args)
     # else:
     #     save_args(parsed_args)
-    save_args(parsed_args)
+    if parsed_args.local_rank == 0:
+        save_args(parsed_args)
+        
+    # print args given to the model
+    return parsed_args
+
+def main_parser_for_evel():
+    parser = get_parser()
+    parsed_args = parser.parse_args([])
+    parsed_args.base_dir = "/private/wangchen/instance_model/output_eval"
+    parsed_args.batch_size = 8
+    parsed_args.train_part = "joint" # 测试前半部分的pt用front 整体用joint
+    parsed_args = check_and_add_additional_args(parsed_args)
+
+    # TODO(wg) 由于多进程的缘故，保存yaml和读取yaml会存在问题
+    # # 加载config的yaml文件
+    # if os.path.exists(parsed_args.config):
+    #     print(parsed_args.config)
+    #     parsed_args = load_args(parser, parsed_args)
+    # else:
+    #     save_args(parsed_args)
+    if parsed_args.local_rank == 0:
+        save_args(parsed_args)
         
     # print args given to the model
     return parsed_args

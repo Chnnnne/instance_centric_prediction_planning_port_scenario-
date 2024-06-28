@@ -24,14 +24,31 @@ class ScoreDecoder(nn.Module):
 
     
 
-    def get_hardcoded_features(self, ego_traj, plan_param):
+    def get_ego_yaw_vel(self, ego_traj, plan_param, plan_all_candidate_mask):
+        # 绝对坐标系下的yaw vel属性
+        B,_,T,_ = ego_traj.shape
+        t_values = torch.linspace(0, 1, T).cuda()
+        vec_param = bezier_derivative(plan_param) # B,3M,(n_order+1), 2 -> B,3M,(n_order),2
+        vec_vectors = bezier_curve(vec_param, t_values)/5 # B,3M,50,2
+        vec_vectors = vec_vectors.clamp(-15,15) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1)
+        vec_scaler = torch.norm(vec_vectors,dim=-1) # B,3M,50
+        vx,vy = vec_vectors[...,0], vec_vectors[...,1]
+        yaw_angle = torch.atan2(vy, vx)# B,3M,50
+        ego_traj = torch.cat([ego_traj, yaw_angle.unsqueeze(-1), vec_scaler.unsqueeze(-1)],dim=-1) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1) # B, 3M, 50, 4
+        return ego_traj
+
+
+
+    def get_hardcoded_features(self, ego_traj, plan_param,plan_all_candidate_mask):
         '''
+        相对坐标系下的编码特征
         input:
-            - ego_traj: B, 3, 50, 2
-            - plan_param: B,3,(n_order+1)*2
+            - ego_traj: B, 3M, 50, 2
+            - plan_param: B,3M,(n_order+1),2
+            - plan_all_candidate_mask: B,3M
         output: 
-            - features: B,3,4
-            - ego_traj: B,3,50,4
+            - features: B,3M,4
+            - ego_traj: B,3M,50,4
         除以5的原因：是按照1s走的50个点而算出来的速度， 而实际情况是5s走了50个点，所以速度/5
         ''' 
 
@@ -39,29 +56,29 @@ class ScoreDecoder(nn.Module):
 
         t_values = torch.linspace(0, 1, T).cuda()
         #1 速度
-        vec_param = bezier_derivative(plan_param) # B,3,(n_order+1), 2 -> B,3,(n_order),2
-        vec_vectors = bezier_curve(vec_param, t_values)/5 # B,3,50,2
-        vec_vectors = vec_vectors.clamp(-15,15)
-        vec_scaler = torch.norm(vec_vectors,dim=-1) # B,3,50
+        vec_param = bezier_derivative(plan_param) # B,3M,(n_order+1), 2 -> B,3M,(n_order),2
+        vec_vectors = bezier_curve(vec_param, t_values)/5 # B,3M,50,2
+        vec_vectors = vec_vectors.clamp(-15,15) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1)
+        vec_scaler = torch.norm(vec_vectors,dim=-1) # B,3M,50
 
         #2 加速度
-        acc_param = bezier_derivative(vec_param) # B,3,(n_order),2 ->B,3,(n_order - 1),2
-        acc_vectors = bezier_curve(acc_param, t_values)/5 # B,3,50,2
-        acc_vectors = acc_vectors.clamp(-15,15)
-        acc_scaler = torch.norm(acc_vectors,dim=-1)# B,3,50
+        acc_param = bezier_derivative(vec_param) # B,3M,(n_order),2 ->B,3M,(n_order - 1),2
+        acc_vectors = bezier_curve(acc_param, t_values)/25 # B,3M,50,2
+        acc_vectors = acc_vectors.clamp(-10,10) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1)
+        acc_scaler = torch.norm(acc_vectors,dim=-1)# B,3M,50
 
         #3 加加速度
-        jerk_param = bezier_derivative(acc_param) # B,3,(n_order-1),2 -> B,3,(n_order - 2),2
-        jerk_vectors = bezier_curve(jerk_param, t_values)/5 # B,3,50,2
-        jerk_vectors = jerk_vectors.clamp(-15,15)
-        jerk_scaler = torch.norm(jerk_vectors,dim=-1)# B,3,50
+        jerk_param = bezier_derivative(acc_param) # B,3M,(n_order-1),2 -> B,3M,(n_order - 2),2
+        jerk_vectors = bezier_curve(jerk_param, t_values)/125 # B,3M,50,2
+        jerk_vectors = jerk_vectors.clamp(-10,10) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1)
+        jerk_scaler = torch.norm(jerk_vectors,dim=-1)# B,3M,50
 
         #4 曲率
         # 曲率的公式：κ = |v_x * a_y - v_y * a_x| / (v_x^2 + v_y^2)^(3/2) B,3,50,2
-        epsilon = 1e-6
+        epsilon = 1e-4
         vx,vy = vec_vectors[...,0], vec_vectors[...,1]
         ax,ay = acc_vectors[...,0], acc_vectors[...,1]
-        curvature = torch.abs(vx * ay - vy * ax)/((vx**2 + vy**2+epsilon)**1.5) # B,3,50
+        curvature = torch.abs(vx * ay - vy * ax)/((vx**2 + vy**2+epsilon)**1.5) # B,3M,50
         # 检查是否有nan值
         if torch.isnan(curvature).any():
             print("Curvature has NaN values:\n", curvature)
@@ -70,21 +87,26 @@ class ScoreDecoder(nn.Module):
             print("ax:",ax)
             print("ay:",ay)
 
-        curvature = torch.clamp(curvature, min=0, max=1)
+        curvature = torch.clamp(curvature, min=0, max=3)
+        curvature = curvature * plan_all_candidate_mask.unsqueeze(-1)
+
         #5 横向加速度
         # 横向加速度的公式：a_lateral = v^2 * κ
-        lateral_acceleration = vec_scaler**2 * curvature # B,3,50
-
+        lateral_acceleration = vec_scaler**2 * curvature # B,3M,50
+        lateral_acceleration = lateral_acceleration * plan_all_candidate_mask.unsqueeze(-1)
         #6 航向角
-        yaw_angle = torch.atan2(vy, vx)# B,3,50
+        # yaw_angle = torch.atan2(vy, vx)# B,3M,50
 
-        v = -vec_scaler.mean(-1).clip(0, 15) / 15 # B,3,50 -> B,3
-        a = acc_scaler.abs().mean(-1).clip(0, 4) / 4 # B,3,50 -> B,3
-        j = jerk_scaler.abs().mean(-1).clip(0, 6) / 6 # B,3,50 -> B,3
-        la = lateral_acceleration.abs().mean(-1).clip(0, 5) / 5 # B,3,50 -> # B,3
+        v = -vec_scaler.mean(-1).clip(0, 15) / 15 # B,3M,50 -> B,3M
+        a = acc_scaler.abs().mean(-1).clip(0, 4) / 4 # B,3M,50 -> B,3M
+        j = jerk_scaler.abs().mean(-1).clip(0, 6) / 6 # B,3M,50 -> B,3M
+        la = lateral_acceleration.abs().mean(-1).clip(0, 5) / 5 # B,3M,50 -> # B,3M
 
-        features = torch.stack((v, a, j, la), dim=-1) # B,3,4
-        ego_traj = torch.cat([ego_traj, yaw_angle.unsqueeze(-1), vec_scaler.unsqueeze(-1)],dim=-1) # B, 3, 50, 4
+        features = torch.stack((v, a, j, la), dim=-1) * plan_all_candidate_mask.unsqueeze(-1) # B,3M,4
+
+
+
+        # ego_traj = torch.cat([ego_traj, yaw_angle.unsqueeze(-1), vec_scaler.unsqueeze(-1)],dim=-1) * plan_all_candidate_mask.unsqueeze(-1).unsqueeze(-1) # B, 3M, 50, 4
 
         '''
         delta_t = 0.1
@@ -142,7 +164,8 @@ class ScoreDecoder(nn.Module):
 
         ego_traj = torch.cat([ego_traj, yaw_angle, v_clone],dim=-1) # B, 3, 50, 4
         '''
-        return features, ego_traj
+        return features
+        # return features, ego_traj
     
     def calculate_collision(self, ego_traj, agent_trajs, agent_trajs_prob, all_candidate_mask):
         # ego_traj: B, T, 4
@@ -168,10 +191,11 @@ class ScoreDecoder(nn.Module):
     def get_latent_interaction_features(self, ego_traj, agent_traj, agent_traj_prob, agents_states, all_candidate_mask, agent_mask):
         '''
         之前是ego traj 和N个agent确定的【1】条轨迹计算交互值，现在是和每个agent的3m条计算交互值
-        - ego_traj: B, 50,4
+        - ego_traj: B, 50,4 
         - agent_traj: B, N, 3m, 50, 5
         - agent_traj_prob: B,N,3m
         - agents_states: B, N, 13
+        - ego_all_cand_mask: B
 
         - all_cand_mask: B,N,3m
         - agent_mask [B,N]
@@ -205,7 +229,7 @@ class ScoreDecoder(nn.Module):
         # mask->B,N,3M, 50, 18 ->encoder B,N,3M,50,256 -> prob -> B,N,3M,50, 256 ->max,max,mean-> B,256 ->decoder-> B,4
         B,N,M,T,D = attributes.shape
         features = self.interaction_feature_encoder(attributes) # B,N,3M,50,256
-        features = features * agent_traj_prob[:,:,:,None,None] # B,N,3M,50, 256 * B,N,3M,1,1
+        features = features * (agent_traj_prob[:,:,:,None,None]**2) # B,N,3M,50, 256 * B,N,3M,1,1
         features = features.max(1).values.max(1).values.mean(1) # B,256
         features = self.interaction_feature_decoder(features) # B,4
         
@@ -223,20 +247,22 @@ class ScoreDecoder(nn.Module):
         return features
 
 
-    def get_yaw_vel(self,agents_traj,param):
+    def get_agent_yaw_vel(self,agents_traj,param, all_candidate_mask):
         '''
         B,N,3m,50,2 -> B,N,3m,50,5
         param:B,N,3M,(n_order+1),2
+        all_candidate_mask:B,N,3m
         '''
         B,N,M,T,D = agents_traj.shape
         t_values = torch.linspace(0,1,T).cuda()
 
         vec_param = bezier_derivative(param) # B,N,3M,n,2
-        vec_vectors = bezier_curve(vec_param, t_values)/5 # B,N,M,50,2
-        vec_vectors = vec_vectors.clamp(-15,15)
-        vec_scaler = torch.norm(vec_vectors, dim=-1)
+        vec_vectors = bezier_curve(vec_param, t_values)/5 # B,N,3M,50,2
+        vec_vectors = vec_vectors.clamp(-15,15) * all_candidate_mask.unsqueeze(-1).unsqueeze(-1)
+        # vec_scaler = torch.norm(vec_vectors, dim=-1)
         vx,vy = vec_vectors[...,0], vec_vectors[...,1]
-        yaw_angle = torch.atan2(vy, vx).unsqueeze(-1)# B,N,M,50
+        yaw_angle = torch.atan2(vy, vx) * all_candidate_mask.unsqueeze(-1)# B,N,3M,50
+        yaw_angle = yaw_angle.unsqueeze(-1) # B,N,3M,50,1
 
     
 
@@ -265,62 +291,58 @@ class ScoreDecoder(nn.Module):
         
 
 
-    def forward(self, ego_trajs, plan_param, ego_encoding, agents_traj, param, agents_traj_probs, agents_states, all_candidate_mask, agent_mask, agent_vecs, agent_ctrs,mat_T):
+    def forward(self, ego_trajs, plan_param, ego_encoding, agents_traj, param, agents_traj_probs, agents_states, all_candidate_mask, plan_all_candidate_mask, agent_mask, agent_vecs, agent_ctrs,mat_T):
         '''
-        - ego_trajs: B,3,50,2
-        - plan_params:  B,3,(n_order+1)*2
-        - ctrs B,N,2
-        - vecs B,N,2
-        - ego_traj_probs: B,3
-        - ego_encoding: B,D128
-        - agents_traj: B,N,3m,50,2
-        - param: B,N,3M,(n_order+1)*2
-        - agents_traj_prob: B,N,3m
-        - agents_states: B,N,13        agent的特征编码（在obs点处）
+        input:
+            - ego_trajs: B,3M,50,2   
+            - plan_params:  B,3M,(n_order+1)*2
+            - ego_encoding: B,D128
+            - agents_traj: B,N,3m,50,2
+            - param: B,N,3m,(n_order+1)*2
+            - agents_traj_probs: B,N,3m
+            - agents_states: B,N,13        agent的特征编码（在obs点处）
+            - all_candidate_mask: B,N,3m
+            - plan_all_candidate_mask: B,3M
+            - agent_mask: B,N
 
-        - all_candidate_mask: B,N,3m
-        - agent_mask: B,N
+            - ctrs B,N,2
+            - vecs B,N,2
 
 
-        - enhanced ego_traj: B,3,50,4 加上了角度和速度
-        - enhanced agents_traj: B,N,3m,50,5 角度和速度（vx/vy）
+            - enhanced ego_traj: B,3,50,4 加上了角度和速度标量 相对坐标系
+            - enhanced agents_traj: B,N,3m,50,5 角度和速度（vx/vy）
         '''
         B,N,M,_,_= agents_traj.shape
         transforms = get_transform(agent_vecs) # B,N,2 -> B,N,2,2
-        ego_trajs = transform_to_ori(ego_trajs, transforms[:,0,:,:], agent_ctrs[:,0,:]) # B,3,50,2 + B,2,2 + B,2
+        ego_trajs = transform_to_ori(ego_trajs, transforms[:,0,:,:], agent_ctrs[:,0,:], plan_all_candidate_mask) # B,3M,50,2 + B,2,2 + B,2
         agents_traj = transform_to_ori(agents_traj, transforms, agent_ctrs, all_candidate_mask) # B,N,3m,50,2 + B,N,2,2 + B,N,2
-        plan_param = plan_param.reshape(B,3,self.n_order + 1,2) # B,3,(n_order+1), 2
-        plan_param = transform_to_ori(plan_param, transforms[:,0,:,:], agent_ctrs[:,0,:])
-        param = param.reshape(B,N,M,self.n_order + 1,2) # B,N,3M,(n_order+1)*2
+        plan_param = plan_param.reshape(B,plan_param.shape[1],self.n_order + 1,2) # B,3M,(n_order+1), 2
+        ego_traj_features= self.get_hardcoded_features(ego_trajs, plan_param,plan_all_candidate_mask) #return B,3M,4vajc    B,3M,50,4 xy,yaw,vel
+
+        plan_param = transform_to_ori(plan_param, transforms[:,0,:,:], agent_ctrs[:,0,:], plan_all_candidate_mask)# 绝对坐标系
+        ego_trajs = self.get_ego_yaw_vel(ego_trajs, plan_param,plan_all_candidate_mask)
+        param = param.reshape(B,N,M,self.n_order + 1,2) # B,N,3m,(n_order+1)*2
         param = transform_to_ori(param, transforms, agent_ctrs, all_candidate_mask)
-        # t_values = torch.linspace(0,1,50).to(torch.float).cuda()
-        # ego_trajs = bezier_curve(plan_param, t_values)
-        # agents_traj =  bezier_curve(param, t_values)
 
-        ego_traj_features, ego_trajs = self.get_hardcoded_features(ego_trajs, plan_param) #B,3,4vajc      B,3,50,4 xy,yaw,vel
-
-        agents_traj = self.get_yaw_vel(agents_traj,param) # B,N,3m,50,5  xy,yaw,vel
+        agents_traj = self.get_agent_yaw_vel(agents_traj,param,all_candidate_mask) # B,N,3m,50,5  xy,yaw,vel
         
         if not self._variable_cost:
             ego_encoding = torch.ones_like(ego_encoding)
         weights = self.weights_decoder(ego_encoding) # B,128->B,8  
-        # weights = torch.zeros((ego_trajs.shape[0],8), dtype=torch.float32, device='cuda') # B,8
-        # ego_traj_features = ego_traj_features * self.weights_param.repeat(B,3,1) # B,3,4 * B,3,4
-        # scores = -torch.sum(ego_traj_features, dim=-1) # B,3
-        scores = []# B, M
+
+        scores = []# B, 3M
         # cal interaction 
-        for i in range(ego_trajs.shape[1]):# 3
+        for i in range(ego_trajs.shape[1]):# 3M
             hardcoded_features = ego_traj_features[:, i]# B,4             
             interaction_features = self.get_latent_interaction_features(ego_trajs[:, i], agents_traj, agents_traj_probs, agents_states, all_candidate_mask, agent_mask)# B,4
-            # interaction_features = torch.zeros_like(hardcoded_features)# B,4
             features = torch.cat((hardcoded_features, interaction_features), dim=-1) # B,8
             score = -torch.sum(features * weights, dim=-1) # B,8 * B,8 -> B
             collision_feature = self.calculate_collision(ego_trajs[:, i], agents_traj, agents_traj_probs, all_candidate_mask)# B
             score += -10 * collision_feature # B
-            scores.append(score)# 3[B]
+            scores.append(score)# 3M[B]
 
-        scores = torch.stack(scores, dim=1) # B,3
-        # scores = torch.where(ego_mask, scores, float('-inf'))# True的地方为原值，False的地方为替换值
+        scores = torch.stack(scores, dim=1) # B,3M
+        scores = torch.where(plan_all_candidate_mask, scores, torch.tensor(float('-inf')).cuda())# True的地方为原值，False的地方为替换值
 
         return scores, weights # score越大代表越接近真人驾驶
 
@@ -343,10 +365,11 @@ def get_transform(agent_vecs):
 def transform_to_ori(feat, transforms, ctrs, mask = None):
     '''
     feat: B,N,M,50,2
-    feat: B,3,50,2
+    feat: B,3M,50,2
     transforms: B,N,2,2
     ctrs: B,N,2
     mask : B,N,3m,
+    mask : B,3m
     '''
     squeeze_flag = False
     if len(feat.shape) == 4:
@@ -359,10 +382,17 @@ def transform_to_ori(feat, transforms, ctrs, mask = None):
     feat[..., 0:2] = torch.matmul(feat[..., 0:2], rot_inv[:,:,None,:,:]) + ctrs[:,:,None,None,:] # B,N,M,50,2@B,N,1,2,2 + B,N,1,1,2
     if squeeze_flag:
         feat = feat.squeeze(1)
-    if mask != None:
+    if mask != None and len(mask.shape) == 3:
+        # B,N,3m,
         B,N,M,T,D = feat.shape
-        mask = (~mask.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,-1,T,D))
+        mask = (~mask.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,-1,T,D)) # B,N,3m,T,D
         feat = feat.masked_fill(mask,0.0)
+    elif mask != None and len(mask.shape) == 2:
+        # B,3M
+        B,M,T,D = feat.shape
+        mask = (~mask.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D)) # B,3M,T,D
+        feat = feat.masked_fill(mask,0.0)
+
     return feat
 
 
