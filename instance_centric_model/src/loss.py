@@ -73,7 +73,7 @@ class Loss(nn.Module):
 
         # irl loss
         scores, weights = output_dict['scores'], output_dict['weights']# scores B,3M    weight B8
-        min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device)) # B,3M,50,2  + B,50,2->B
+        min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device), plan_all_candidate_mask) # B,3M,50,2  + B,50,2 ->B
         if self.args.train_part == "back" or self.args.train_part == "joint":
             irl_loss = F.cross_entropy(scores, min_idx)
             weights_regularization = torch.square(weights).mean()
@@ -101,15 +101,18 @@ class Loss(nn.Module):
                         }
         return loss, loss_dict
     
-    def get_closest_traj_idx(self, plan_trajs, gt_trajs):
+    def get_closest_traj_idx(self, plan_trajs, gt_trajs, plan_all_candidate_mask):
         '''
         - plan_trajs: B,3M,50,2   
         - gt_trajs: B,50,2
+        - plan_all_candidate_mask:B,3M
         '''
         B,_,T,_ = plan_trajs.shape
         dists = torch.norm(plan_trajs - gt_trajs[:,None,:,:], dim=-1) # B,3M,50,2 -》 B,3M,50 
-        dists = torch.linspace(0.7,1.3, T,device=dists.device) * dists
-        min_idx = torch.argmin(dists.sum(-1),dim=-1) # B
+        dists = torch.linspace(0.7,1.3, T,device=dists.device) * dists # B,3M,50
+        dists = dists.sum(-1) # B,3M 
+        dists = torch.where(plan_all_candidate_mask, dists, torch.tensor(float('inf')).cuda())# True的地方为原值，False的地方为替换值
+        min_idx = torch.argmin(dists,dim=-1) # B
         return min_idx
 
 
