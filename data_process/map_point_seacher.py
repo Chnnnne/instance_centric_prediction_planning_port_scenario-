@@ -504,6 +504,9 @@ class MapPointSeacher():
         else:
             if cumulative_distances[-1] >= 50:
                 print("gt轨迹比较长，可以取30m-50m之间的gt轨迹和候选进行度量")
+                if agt_traj_fut_all.shape[0] < 7:
+                    print("真值点过少")
+                    return -1, [0]
                 # 二分寻找30和50轨迹对应的点idx
                 # end_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 50)
                 # start_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 30)
