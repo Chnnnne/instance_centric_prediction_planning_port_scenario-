@@ -209,6 +209,7 @@ class Model(nn.Module):
         #######################################################################################
         T, D = 50, 2
         M = output_dict['param'].shape[2]
+        plan_M = output_dict['plan_params'].shape[1]
         batch_size, N = pred_mask.shape
         order = self.args.bezier_order + 1
         t_values = torch.linspace(0,1,50).cuda()
@@ -227,7 +228,7 @@ class Model(nn.Module):
         for i in range(valid_batch_size):
             if gt_label[i] ==max_indices[i]:
                 target_top += 1
-        # 计算轨迹有关的指标
+
 
         param = output_dict['param'][pred_mask].reshape(valid_batch_size, M,order, 2) # B,N,3M,(n+1)*2,    S,3M,(n+1)*2 =>  S,3M,(n+1), 2 
         traj_probs = output_dict['traj_probs'][pred_mask] # B, N, 3M -> S, 3M
@@ -235,22 +236,24 @@ class Model(nn.Module):
         traj_gt = input_dict["gt_preds"].cuda()[pred_mask].unsqueeze(1) # B N 50 2 -> S,1,50,2
 
 
-        traj_topk_indices = traj_probs.topk(k=3, dim=-1).indices # S,K
+        traj_topk_probs, traj_topk_indices = traj_probs.topk(k=3, dim=-1) # S,K
         topk_trajs = trajs.gather(1, traj_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,K,50,2
         topk_param = param.gather(1, traj_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# S,K,(n+1),2
 
-        traj_top1_indices = traj_probs.topk(k=1, dim=-1).indices #S,1
+        traj_top1_probs, traj_top1_indices = traj_probs.topk(k=1, dim=-1) #S,1
         top1_trajs = trajs.gather(1, traj_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,1,50,2
         top1_param = param.gather(1, traj_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# S,1,(n+1),2
         
-        _, mink_traj_ade = get_minK_ade(topk_trajs, traj_gt) # 1
-        _, min1_traj_ade = get_minK_ade(top1_trajs, traj_gt) # 1
+        _, mink_ade = get_minK_ade(topk_trajs, traj_gt) # 1
+        _, min1_ade = get_minK_ade(top1_trajs, traj_gt) # 1
         mink_fde_part, mink_fde = get_minK_fde(topk_trajs, traj_gt)
         min1_fde_part, min1_fde = get_minK_fde(top1_trajs, traj_gt)
+        mink_brier_fde, brier_score = get_minK_brier_FDE(topk_trajs, traj_gt, traj_topk_probs)
+
         mink_mr = get_minK_mr(mink_fde_part)
         min1_mr = get_minK_mr(min1_fde_part)
-        mink_jerk = get_minK_jerk(topk_param,t_values)
-        min1_jerk = get_minK_jerk(top1_param,t_values)
+        mink_RMS_jerk = get_minK_jerk(topk_param,t_values)
+        min1_RMS_jerk = get_minK_jerk(top1_param,t_values)
 
         # 计算curvature、lateral
 
@@ -266,26 +269,26 @@ class Model(nn.Module):
 
         ego_gt_traj = input_dict['ego_gt_traj'].unsqueeze(1).cuda() # B,1,50,2
         plan_trajs = output_dict['plan_trajs'] # B,3M,50,2
-        plan_param = output_dict['plan_params'].reshape(batch_size, 3, self.args.bezier_order+1, 2) # B,3M,(n+1),2
+        plan_param = output_dict['plan_params'].reshape(batch_size, plan_M, self.args.bezier_order+1, 2) # B,3M,(n+1),2
         
-
         if output_dict['scores'] != None:
-            plan_cost = output_dict['scores'] # B,3M
-            min_val = plan_cost.min(dim=-1).values.unsqueeze(-1) # B
-            max_val = plan_cost.max(dim=-1).values.unsqueeze(-1) # B
-            plan_cost = (plan_cost - min_val)/(max_val - min_val) # B,3M / B,1
-            plan_supl = output_dict['plan_traj_probs'] # B,3M
-            plan_scores = plan_supl * plan_cost #B,3M
-
+            plan_scores = output_dict['scores']
+            plan_scores = score_to_prob(plan_scores)
+            # plan_cost = output_dict['scores'] # B,3M
+            # min_val = plan_cost.min(dim=-1).values.unsqueeze(-1) # B
+            # max_val = plan_cost.max(dim=-1).values.unsqueeze(-1) # B
+            # plan_cost = (plan_cost - min_val)/(max_val - min_val) # B,3M / B,1
+            # plan_supl = output_dict['plan_traj_probs'] # B,3M
+            # plan_scores = plan_supl * plan_cost #B,3M
 
         elif "plan_traj_probs" in output_dict:
             plan_scores = output_dict['plan_traj_probs'] # B,3M
             
-        score_topk_indices = torch.topk(plan_scores, k=k, dim=-1).indices # B,3M -> B,K
+        plan_topk_scores, score_topk_indices = torch.topk(plan_scores, k=k, dim=-1) # B,3M -> B,K   B,K
         plan_topk_traj = plan_trajs.gather(1, score_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D)) # B,3M,50,2 -> B,K,50,2
         plan_topk_param = plan_param.gather(1, score_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# B,3M,n+1,2->B,K,n+1,2
         
-        score_top1_indices = torch.topk(plan_scores, k=1, dim=-1).indices # B,1,
+        plan_top1_scores, score_top1_indices = torch.topk(plan_scores, k=1, dim=-1) # B,1   B,1  
         plan_top1_traj = plan_trajs.gather(1, score_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D)) # B,3M,50,2 ->  B,1,50,2
         plan_top1_param = plan_param.gather(1, score_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,order, 2))# ->B,1,n+1,2
         #ade
@@ -294,9 +297,11 @@ class Model(nn.Module):
         #fde
         plan_mink_fde_part, plan_mink_fde = get_minK_fde(plan_topk_traj, ego_gt_traj)
         plan_min1_fde_part, plan_min1_fde = get_minK_fde(plan_top1_traj, ego_gt_traj)
+        # brier-fde
+        plan_mink_brier_fde, plan_brier_score = get_minK_brier_FDE(plan_topk_traj, ego_gt_traj, plan_topk_scores)
         # mr
-        plan_mink_missing_num = get_minK_mr(plan_mink_fde_part)
-        plan_min1_missing_num = get_minK_mr(plan_min1_fde_part)
+        plan_mink_mr = get_minK_mr(plan_mink_fde_part)
+        plan_min1_mr = get_minK_mr(plan_min1_fde_part)
         # jerk
         plan_mink_RMS_jerk = get_minK_jerk(plan_topk_param,t_values) 
         plan_min1_RMS_jerk = get_minK_jerk(plan_top1_param,t_values) 
@@ -353,18 +358,31 @@ class Model(nn.Module):
         '''
 
         metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
-                      "target_top":(target_top, 1), "mink_traj_ade":(mink_traj_ade,1), "min1_traj_ade":(min1_traj_ade,1), 
-                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
-                      "mink_jerk": (mink_jerk,1), "min1_jerk":(min1_jerk,1), "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
+                      "target_top":(target_top, 1), 
+                      "mink_ade":(mink_ade,1), "min1_ade":(min1_ade,1), 
+                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_brier_fde":(mink_brier_fde, 1),  "brier_score":(brier_score, 1),
+                      "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
+                      "mink_RMS_jerk": (mink_RMS_jerk,1), "min1_RMS_jerk":(min1_RMS_jerk,1), 
+                      "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
                       
                       "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
-                      "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), 
-                      "plan_mink_missing_num":(plan_mink_missing_num, 2),"plan_min1_missing_num":(plan_min1_missing_num,2),
+                      "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), "plan_mink_brier_fde":(plan_mink_brier_fde,2), "plan_brier_score":(plan_brier_score, 2),
+                      "plan_mink_mr":(plan_mink_mr, 2),"plan_min1_mr":(plan_min1_mr,2),
                       "plan_mink_RMS_jerk":(plan_mink_RMS_jerk,2),"plan_min1_RMS_jerk":(plan_min1_RMS_jerk,2), 
                       "risk_num":(risk_num,2),"agent_dist":(agent_dist,2),
                       "plan_curvature":(plan_curvature,2),"plan_lateral_acceleration":(plan_lateral_acceleration,2),
                       "plan_min1_ahe":(plan_min1_ahe,2),"plan_min1_fhe":(plan_min1_fhe,2)}
         return metric_dict
+
+
+def score_to_prob(scores):
+    # scores B,3M
+    # min_val = scores.min(dim = -1,keepdim=True).values # B,1
+    # max_val = scores.max(dim = -1,keepdim=True).values # B,1
+    # scores = (scores - min_val)/(max_val - min_val) # 归一化
+    # scores = scores**2
+    scores = F.softmax(scores, dim=-1)
+    return scores
 
 def get_yaw(traj):
     '''
@@ -428,6 +446,64 @@ def get_minK_fde(proposed_traj, gt_traj):
     fde_part = torch.linalg.norm(proposed_traj[:,:,-1,:] - gt_traj[:,:,-1,:], dim=-1).min(dim=-1).values
     fde = fde_part.sum(-1)
     return fde_part, fde
+
+
+def distance_metric(traj_candidate: torch.Tensor, traj_gt: torch.Tensor):
+    """
+    input:
+    - S,m, 100
+    - S,100
+
+    return:
+    S, M
+    compute the distance between the candidate trajectories and gt trajectory
+    :param traj_candidate: torch.Tensor, [batch_size, M, horizon * 2] or [M, horizon * 2]
+    :param traj_gt: torch.Tensor, [batch_size, horizon * 2] or [1, horizon * 2]
+    :return: distance, torch.Tensor, [batch_size, M] or [1, M]
+    """
+    assert traj_gt.dim() == 2, "Error dimension in ground truth trajectory"
+    if traj_candidate.dim() == 3:
+        # batch case
+        pass
+
+    elif traj_candidate.dim() == 2:
+        traj_candidate = traj_candidate.unsqueeze(1)
+    else:
+        raise NotImplementedError
+
+    assert traj_candidate.size()[2] == traj_gt.size()[1], "Miss match in prediction horizon!"
+
+    _, M, horizon_2_times = traj_candidate.size()
+    dis = torch.pow(traj_candidate - traj_gt.unsqueeze(1), 2).view(-1, M, int(horizon_2_times / 2), 2)
+    # S,m,100 - S,1,100       (S,m,100)**2        view (S,m,50,2)
+    dis, _ = torch.max(torch.sum(dis, dim=3), dim=2)# (S,m,50,2)---sum-->(S,m,50)  --max-> S,m
+    dis = torch.sqrt(dis)
+    # dis= torch.sqrt(torch.sum(dis, dim=3)) # (S,m,50)  
+    # weight = torch.linspace(0.5,1.5,int(horizon_2_times / 2)).cuda()
+    # res = torch.sum(dis*weight, axis = 2)
+    return dis
+
+def get_minK_brier_FDE(proposed_traj, gt_traj, pred_prob):
+    '''
+    - proposed_traj: B,W不定,50,2
+    - gt_traj: B,1,50,2
+    - pred_prob: B,W
+    '''
+    B,W,T,D = proposed_traj.shape
+    # 计算 FDE
+    distances = torch.linalg.norm(proposed_traj[:,:,-1,:] - gt_traj[:,:,-1,:], dim=-1)#B,W
+
+    dist = distance_metric(proposed_traj.view(B,W,-1), gt_traj.reshape(B,-1)) # B,W,100 + B,100 -> B,W
+    gt_prob = F.softmax(dist,dim=-1) # B,W
+    # 计算 Brier Score（示例，这里假设真实的概率分布是均匀的）
+
+    brier_score = torch.sum((pred_prob - gt_prob) ** 2)# B,W 
+    
+    # 加权 FDE
+    weighted_fde = distances * gt_prob # B,W 
+    
+    return torch.min(weighted_fde,dim=-1).values.sum(-1), brier_score
+
 def get_minK_mr(fde_part, dis=3):
     '''
     求预测轨迹（每个agent有W条）和真值轨迹（每个agent1条）的最小fde是否大于dis（）
