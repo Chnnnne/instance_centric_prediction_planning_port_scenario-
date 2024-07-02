@@ -15,6 +15,9 @@ if project_path not in sys.path:
 import common.math_utils as math_utils
 import common.plot_utils as plot_utils
 
+from loguru import logger
+
+
 def judge_undefined_scene(x, y):
     a = -(80.0/77)
     b = 3715155.25974
@@ -24,14 +27,14 @@ def judge_undefined_scene(x, y):
     
 def parse_log_data(log_data):
     '''
-    得到以id为key，坐标等信息为val的字典
+    得到以id为key，坐标速度，长宽等信息为val的字典 data_info
     key = -1 代表ego
     '''
     data_info = {}
     ego_id = -1
     kDefaultCenterOffsetRatio = 0.401
     kDefaultBaseOffsetRatio = 0.295
-    for i in range(len(log_data)):
+    for i in range(len(log_data)): # 遍历这个以时间排序的，类型是world_debug数据的list
         cur_frame = log_data[i]
         cur_t = cur_frame.timestamp
         # 自车信息
@@ -154,6 +157,7 @@ def get_agent_ids(data_info, cur_t):
 def transform_to_local_coords(feat, center_xy, center_heading, heading_index=-1, type_index = -1):
     '''
     以center_heading作为新坐标系的y轴
+    feat 20,7
     # N, 20, 2
     # origin  N,2
     '''
@@ -172,9 +176,9 @@ def transform_to_local_coords(feat, center_xy, center_heading, heading_index=-1,
     if type_index != -1:
         # TODO（wg）后续移除VEHICLE、BUS
         #-1:ego, 0:'HUMAN', 1:CONTAINER_TRUCK, 2:TRUCK, 3:'CAR', 4:'BUS', 11:'STACKER'
-        types = [-1, 0, 1, 2, 3, 4, 11]
-        one_hot = np.eye(len(types))[np.searchsorted(types, feat[:, type_index])]
-        feat = np.concatenate((feat[:, :-1], one_hot), axis=-1)
+        types = [-1, 0, 1, 2, 3, 4, 11] 
+        one_hot = np.eye(len(types))[np.searchsorted(types, feat[:, type_index])] #  eye: 7*7     index: [20] -> [20, 7]
+        feat = np.concatenate((feat[:, :-1], one_hot), axis=-1) # 20,6 + 7
     return feat
 
 def get_candidate_gt(candidate_points, gt_target):
@@ -433,7 +437,7 @@ def generate_his_feats(data_info, agent_ids):
             - agent_mask: [all_n,20]
     '''
     agent_feats, agent_masks = [], []
-    for agent_id, end_index in agent_ids:
+    for agent_id, end_index in agent_ids:# agent
         agent_feat = np.zeros((20, 7))
         agent_mask = np.zeros(20)
         start_index = end_index - 19
@@ -442,7 +446,7 @@ def generate_his_feats(data_info, agent_ids):
             start_index = 0
             index = abs(start_index)
         agent_info = data_info[agent_id]
-        while start_index <= end_index:
+        while start_index <= end_index: # index
             agent_feat[index] = np.array([agent_info['x'][start_index], agent_info['y'][start_index],
                                           agent_info['vel'][start_index], agent_info['vel_yaw'][start_index],
                                           agent_info['length'][start_index], agent_info['width'][start_index],
@@ -658,18 +662,22 @@ def get_sin(v1, v2):
     return sin_dang
     
 def generate_rpe_feats(ctrs, vecs):
-    d_pos = np.linalg.norm(ctrs[np.newaxis, :, :] - ctrs[:, np.newaxis, :], axis=-1)
+    '''
+    ctrs: all,2
+    vecs: all,2
+    '''
+    d_pos = np.linalg.norm(ctrs[np.newaxis, :, :] - ctrs[:, np.newaxis, :], axis=-1) # 1,all,2 - all, 1, 2 -> all,all,2 -> all,all
     d_pos = d_pos * 2 / 100  # scale [0, radius] to [0, 2]
-    pos_rpe = d_pos[np.newaxis, :]
-    cos_a1 = get_cos(vecs[np.newaxis, :], vecs[:, np.newaxis])
-    sin_a1 = get_sin(vecs[np.newaxis, :], vecs[:, np.newaxis])
-    v_pos = ctrs[np.newaxis, :, :] - ctrs[:, np.newaxis, :] 
-    cos_a2 = get_cos(vecs[np.newaxis, :], v_pos)
-    sin_a2 = get_sin(vecs[np.newaxis, :], v_pos)
+    pos_rpe = d_pos[np.newaxis, :] # 1,all,all,2
+    cos_a1 = get_cos(vecs[np.newaxis, :], vecs[:, np.newaxis]) # 1,all,2     all,1,2
+    sin_a1 = get_sin(vecs[np.newaxis, :], vecs[:, np.newaxis]) # 
+    v_pos = ctrs[np.newaxis, :, :] - ctrs[:, np.newaxis, :]  # 1,all,2 - all, 1, 2 = all,all,2
+    cos_a2 = get_cos(vecs[np.newaxis, :], v_pos) # 1,all,2  
+    sin_a2 = get_sin(vecs[np.newaxis, :], v_pos) # 
 
     ang_rpe = np.stack([cos_a1, sin_a1, cos_a2, sin_a2])
-    rpe = np.concatenate([ang_rpe, pos_rpe], axis=0)
-    rpe = np.transpose(rpe, (1, 2, 0))
+    rpe = np.concatenate([ang_rpe, pos_rpe], axis=0)# 5,all,all
+    rpe = np.transpose(rpe, (1, 2, 0))# all,all,5
     rpe_mask = np.ones((rpe.shape[0], rpe.shape[0]))
     return rpe, rpe_mask
 
@@ -733,7 +741,21 @@ def my_candidate_refpath_search_test(index):
             plot_utils.draw_candidate_refpaths_with_his_fut(ori,candidate_refpaths_cords, cand_gt_idx, agt_traj_his_2s ,agt_traj_fut_all, other_info = {"pkl_path":pickle_path, "pkl_index":index, "ego_frame":i, "way": " ","target_id":target_id, "errors":errors})
             print("="*100,"new agent end")
             
-
+def check_nan_inf_abnormal(tensor_dict, other_info):
+    flag = False
+    for key in tensor_dict.keys():
+        if np.isinf(tensor_dict[key]).any():
+            logger.debug(f"{key} contains inf\n")
+            flag = True
+        if np.isnan(tensor_dict[key]).any():
+            logger.debug(f"{key} contains nan\n")
+            flag = True
+        if (tensor_dict[key] > 2000).any():
+            logger.debug(f"{key} bigger than 2000, val:{tensor_dict[key]}\n")
+            flag = True
+    if flag:
+        logger.debug(other_info)
+    return flag
 
 
 def load_seq_save_features(index):
@@ -764,8 +786,10 @@ def load_seq_save_features(index):
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
         candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
+
         ego_refpath_cords, ego_refpath_vecs, ego_gt_cand, ego_vel_mode, ego_gt_traj, ego_cand_mask = generate_ego_future_feats(ego_info, i)
-        
+
+
         if candidate_refpaths_cords is None or ego_refpath_cords is None:
             continue
         # 计算障碍物的历史特征
@@ -773,6 +797,8 @@ def load_seq_save_features(index):
         agent_ids.extend(target_ids)
         agent_ids.extend(surr_ids)
         agent_feats, agent_masks = generate_his_feats(data_info, agent_ids)
+
+                    
         agent_ctrs, agent_vecs = [], [] # 存储所有agent的obs点信息 (all_n,2) (all_n,2)
         for agent_id, index in agent_ids:
             agent_ctrs.append([data_info[agent_id]['x'][index], data_info[agent_id]['y'][index]])
@@ -801,15 +827,18 @@ def load_seq_save_features(index):
             continue
 
         # 计算rpe特征
-        scene_ctrs = np.concatenate((agent_ctrs, map_ctrs), axis=0)
-        scene_vecs = np.concatenate((agent_vecs, map_vecs), axis=0)
+        scene_ctrs = np.concatenate((agent_ctrs, map_ctrs), axis=0) # n,2    map_n,2
+        scene_vecs = np.concatenate((agent_vecs, map_vecs), axis=0) # n,2    map_n,2
         rpe, rpe_mask = generate_rpe_feats(scene_ctrs, scene_vecs)
 
         feat_data = {}
         feat_data['agent_ctrs'] = agent_ctrs.astype(np.float32) # (all_n,2) 
         feat_data['agent_vecs'] = agent_vecs.astype(np.float32) # (all_n,2)
         feat_data['agent_feats'] = agent_feats.astype(np.float32) # [all_n, 20, 13]
-        feat_data['agent_mask'] = agent_masks.astype(np.int32) # [all_n,20]
+        feat_data['agent_mask'] = agent_masks.astype(np.int32) # [all_n, 20]
+        # mask pos to zero
+        feat_data['agent_feats'][~feat_data['agent_mask'].astype(bool)] = 0
+
         
 
         feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (M,20,2)
@@ -825,7 +854,10 @@ def load_seq_save_features(index):
         feat_data['gt_vel_mode'] = pad_gt_vel_mode.astype(np.int32) # all_n
         feat_data['gt_candts'] = pad_gt_candts.astype(np.float32) # all_n, max-N
         feat_data['candidate_mask'] = pad_candidate_mask.astype(np.int32) # all_n, max-N
-    
+        # mask pos to zero
+        feat_data['candidate_refpaths_cords'][~feat_data['candidate_mask'].astype(bool)] = 0
+        feat_data['candidate_refpaths_vecs'][~feat_data['candidate_mask'].astype(bool)] = 0
+
         # feat_data['tar_candidate'] = pad_tar_candidate.astype(np.float32)
         # feat_data['candidate_mask'] = pad_candidate_mask.astype(np.int32)
         # feat_data['gt_preds'] = pad_gt_preds.astype(np.float32)
@@ -837,48 +869,63 @@ def load_seq_save_features(index):
         feat_data['map_vecs'] = map_vecs.astype(np.float32) # map_element_num, 2
         feat_data['map_feats'] = map_feats.astype(np.float32) # map_element_num, 20, 5
         feat_data['map_mask'] = map_mask.astype(np.int32) # map_element_num, 20
+        # mask pos to zero
+        feat_data['map_feats'][~feat_data['map_mask'].astype(bool)] = 0
+
+
+
 
         feat_data['rpe'] = rpe.astype(np.float32)
         feat_data['rpe_mask'] = rpe_mask.astype(np.int32)
         save_path = str(cur_output_path) + f'/{vehicle_name}_{cur_t}.pkl'
+        check_dict = {"agent_feats":feat_data['agent_feats'], "agent_vecs":feat_data['agent_vecs'], 
+                      "ego_refpath_cords":feat_data['ego_refpath_cords'], "ego_refpath_vecs": feat_data['ego_refpath_vecs'],"ego_gt_traj":feat_data['ego_gt_traj'],
+                    "candidate_refpaths_cords": feat_data['candidate_refpaths_cords'], "candidate_refpaths_vecs":feat_data['candidate_refpaths_vecs'],
+                    "gt_preds":feat_data['gt_preds'], "map_feats":feat_data['map_feats']
+        }
+        if check_nan_inf_abnormal(check_dict, other_info = f"pickle_path:{pickle_path}, i:{i}"):
+            continue
         with open(save_path, 'wb') as f:
             pickle.dump(feat_data, f)
             print(f"file_index:{index}, i:{i}, pkl saved at{save_path}")
             print("$"*80)
 
-    return 
+    return
 
 if __name__=="__main__": 
     
+    logger.add("runtime{time}.log")
+
+    logger.debug("debug begin")
     map_file_path = "/fabupilot/release/resources/hdmap_lib/meishangang/map.bin"
     scene_type = 'port_meishan'
     HDMapManager.LoadMap(map_file_path, scene_type)
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    # input_path = '/private2/wanggang/pre_log_inter_data'
-    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
+    input_path = '/private2/wanggang/pre_log_inter_data'
+    # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
-    all_file_list = all_file_list[:int(len(all_file_list)/1)]
+    all_file_list = all_file_list[:int(len(all_file_list)/6)]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
     cur_files = train_files
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
-    # cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
+    # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    # pool = multiprocessing.Pool(processes=16)
-    # pool.map(load_seq_save_features, range(len(cur_files)))
+    pool = multiprocessing.Pool(processes=16)
+    pool.map(load_seq_save_features, range(len(cur_files)))
 
-    for i in range(1,2): # 19 error 21 draw
-        print("--"*20, i)
-    #     # my_candidate_refpath_search_test(i)
-        load_seq_save_features(i)
+    # for i in range(10,100): # 19 error 21 draw
+    #     print("--"*20, i)
+    # #     # my_candidate_refpath_search_test(i)
+    #     load_seq_save_features(i)
 
-    print("###########完成###############")
+    # print("###########完成###############")
     # pool.close()
     # pool.join()
     
