@@ -82,8 +82,31 @@ class Model(nn.Module):
 
     def forward(self, batch_dict):
         agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() # [b,all_n-Max,20,13]  [b,all_n-Max,20]
+        # if torch.isinf(agent_polylines).any():
+        #     print("1"*100)
+        #     exit()
+        # if torch.isnan(agent_polylines).any():
+        #     print("2"*100)
+        #     exit()
+        # if (agent_polylines > 3000).any():
+        #     print("2.5"*100)
+        #     exit()
         map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() # [b, map_element_num-Max, 20, 5]   [b, map_element_num-Max, 20]
+        # if torch.isinf(map_polylines).any():
+        #     print("3"*100)
+        #     exit()
+
+        # if torch.isnan(map_polylines).any():
+        #     print("4"*100)
+        #     exit()
         agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # B,N,20,13 + B,N,20 -> [B,N,d_agent]
+        # if torch.isinf(agent_feats).any():
+        #     print("5"*100)
+        #     exit()
+
+        # if torch.isnan(agent_feats).any():
+        #     print("6"*100)
+        #     exit()
         map_feats = self.map_net(map_polylines, map_polylines_mask) # B,N,20,5 + B,N,20 -> [b, map_element_num-Max,d_map]
         
         rpe, rpe_mask = batch_dict['rpe'].cuda(), batch_dict['rpe_mask'].cuda().bool()
@@ -105,7 +128,8 @@ class Model(nn.Module):
         # agent traj decoder
         cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask)
         if torch.isnan(param).any():
-            print("param contain nan", param)
+            print("7"*100)
+            exit()
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
                                            param.shape[2], -1, 2) # # B,N,3M,n_order*2 -> B, N, 3m, n_order+1, 2
@@ -364,6 +388,7 @@ class Model(nn.Module):
                       "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
                       "mink_RMS_jerk": (mink_RMS_jerk,1), "min1_RMS_jerk":(min1_RMS_jerk,1), 
                       "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
+                      "mink_fhe":(mink_fhe,1), "min1_fhe":(min1_fhe,1),
                       
                       "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
                       "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), "plan_mink_brier_fde":(plan_mink_brier_fde,2), "plan_brier_score":(plan_brier_score, 2),

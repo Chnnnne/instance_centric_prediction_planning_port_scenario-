@@ -352,6 +352,10 @@ class Trainer(object):
                 losses_epoch["weights_regularization"] += loss_dict["weights_regularization"].detach().item()
 
                 loss.backward()
+                # for name, param in self.net.named_parameters():
+                #     if param.grad is None:
+                #         print(name)
+
                 # 暂时不适用梯度裁剪
                 # torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.args.clip)
                 self.optimizer.step()
