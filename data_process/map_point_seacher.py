@@ -502,26 +502,18 @@ class MapPointSeacher():
             return -1, [0]
 
         else:
-            if cumulative_distances[-1] >= 50:
-                print("gt轨迹比较长，可以取30m-50m之间的gt轨迹和候选进行度量")
-                if agt_traj_fut_all.shape[0] < 7:
-                    print("真值点过少")
-                    return -1, [0]
-                # 二分寻找30和50轨迹对应的点idx
-                # end_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 50)
-                # start_idx = binary_search(cumulative_distances, 0, len(cumulative_distances) - 1, 30)
-                # print("end_idx",cumulative_distances[end_idx])
-                # print("start_idx",cumulative_distances[start_idx])
-                # agt_traj_fut_all_sample = agt_traj_fut_all[start_idx:end_idx + 1]
-                sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=30, end_dis=50, cumulative_distances=cumulative_distances)
-            else:
-                print("gt轨迹在5-50m之间，取真实轨迹的后40%长度的点进行比较")
-                if agt_traj_fut_all.shape[0] < 7:
-                    print("真值点过少")
-                    return -1, [0]
-                # start_idx = int(len(agt_traj_fut_all) * 0.6)
-                # agt_traj_fut_all_sample = agt_traj_fut_all[start_idx:]
-                sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=cumulative_distances[-1] * 0.6, cumulative_distances=cumulative_distances)
+            if agt_traj_fut_all.shape[0] < 7:
+                print("真值点过少")
+                return -1, [0]
+            try:
+                if cumulative_distances[-1] >= 50:
+                    print("gt轨迹比较长，可以取30m-50m之间的gt轨迹和候选进行度量")
+                    sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=30, end_dis=50, cumulative_distances=cumulative_distances)
+                else:
+                    print("gt轨迹在5-50m之间，取真实轨迹的后40%长度的点进行比较")
+                    sampled_x,sampled_y = self.sample_points(agt_traj_fut_all,num=21,start_dis=cumulative_distances[-1] * 0.6, cumulative_distances=cumulative_distances)
+            except:
+                return -1, [0]
                 
             agt_traj_fut_all_sample = np.column_stack((sampled_x, sampled_y))
             # 计算 agt_traj_sample和候选ref逐一计算一个距离， 距离定义：
