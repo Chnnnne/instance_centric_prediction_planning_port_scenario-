@@ -6,21 +6,21 @@ import pickle
 import numpy as np
 from utils import get_dist_info
 from loguru import logger
-def check_nan_inf_abnormal(tensor_dict, other_info):
-    flag = False
-    for key in tensor_dict.keys():
-        if np.isinf(tensor_dict[key]).any():
-            logger.debug(f"{key} contains inf\n")
-            flag = True
-        if np.isnan(tensor_dict[key]).any():
-            logger.debug(f"{key} contains nan\n")
-            flag = True
-        if (tensor_dict[key] > 2000).any():
-            logger.debug(f"{key} bigger than 2000, val:{tensor_dict[key]}\n")
-            flag = True
-    if flag:
-        logger.debug(other_info)
-    return flag
+# def check_nan_inf_abnormal(tensor_dict, other_info):
+#     flag = False
+#     for key in tensor_dict.keys():
+#         if np.isinf(tensor_dict[key]).any():
+#             logger.debug(f"{key} contains inf\n")
+#             flag = True
+#         if np.isnan(tensor_dict[key]).any():
+#             logger.debug(f"{key} contains nan\n")
+#             flag = True
+#         if (tensor_dict[key] > 2000).any():
+#             logger.debug(f"{key} bigger than 2000, val:{tensor_dict[key]}\n")
+#             flag = True
+#     if flag:
+#         logger.debug(other_info)
+#     return flag
 class InterDataSet(Dataset):
     def __init__(self, dataset_dir, set_name):
         self.data_root = os.path.join(dataset_dir, set_name)
@@ -41,24 +41,23 @@ class InterDataSet(Dataset):
     def __getitem__(self, i):
         data_path = os.path.join(self.data_root, self.ids[i])
         with open(data_path, "rb") as f:
-            # try:
-            data_dict = pickle.load(f)
-            check_dict = {"agent_feats":data_dict['agent_feats'], "agent_vecs":data_dict['agent_vecs'], 
-                    "ego_refpath_cords":data_dict['ego_refpath_cords'], "ego_refpath_vecs": data_dict['ego_refpath_vecs'],"ego_gt_traj":data_dict['ego_gt_traj'],
-                "candidate_refpaths_cords": data_dict['candidate_refpaths_cords'], "candidate_refpaths_vecs":data_dict['candidate_refpaths_vecs'],
-                "gt_preds":data_dict['gt_preds'], "map_feats":data_dict['map_feats']
-            }
-            if check_nan_inf_abnormal(check_dict, f"data_path{data_path}"):
-                print("find_inf nan abonormal")
-                print("-"*100)
-                exit()
-
-            # except:
-            #     print("something wroth occurs during load the pkl data, plz check\n"*30)
+            try:
+                data_dict = pickle.load(f)
+            # check_dict = {"agent_feats":data_dict['agent_feats'], "agent_vecs":data_dict['agent_vecs'], 
+            #         "ego_refpath_cords":data_dict['ego_refpath_cords'], "ego_refpath_vecs": data_dict['ego_refpath_vecs'],"ego_gt_traj":data_dict['ego_gt_traj'],
+            #     "candidate_refpaths_cords": data_dict['candidate_refpaths_cords'], "candidate_refpaths_vecs":data_dict['candidate_refpaths_vecs'],
+            #     "gt_preds":data_dict['gt_preds'], "map_feats":data_dict['map_feats']
+            # }
+            # if check_nan_inf_abnormal(check_dict, f"data_path{data_path}"):
+            #     print("find_inf nan abonormal")
+            #     print("-"*100)
             #     exit()
-            #     bak_up_file_path = "/private/wangchen/instance_model/instance_model_data/test/howo55_1691777795.6718624.pkl"
-            #     with open(bak_up_file_path, "rb") as b:
-            #         data_dict = pickle.load(b)
+            except:
+                print("something wroth occurs during load the pkl data, plz check\n"*30)
+                exit()
+                bak_up_file_path = "/private/wangchen/instance_model/instance_model_data/test/howo55_1691777795.6718624.pkl"
+                with open(bak_up_file_path, "rb") as b:
+                    data_dict = pickle.load(b)
         return data_dict
     
     def collate_batch(self, batch_list):

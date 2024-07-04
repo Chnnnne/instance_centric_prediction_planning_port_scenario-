@@ -82,31 +82,8 @@ class Model(nn.Module):
 
     def forward(self, batch_dict):
         agent_polylines, agent_polylines_mask = batch_dict['agent_feats'].cuda(), batch_dict['agent_mask'].cuda().bool() # [b,all_n-Max,20,13]  [b,all_n-Max,20]
-        # if torch.isinf(agent_polylines).any():
-        #     print("1"*100)
-        #     exit()
-        # if torch.isnan(agent_polylines).any():
-        #     print("2"*100)
-        #     exit()
-        # if (agent_polylines > 3000).any():
-        #     print("2.5"*100)
-        #     exit()
         map_polylines, map_polylines_mask = batch_dict['map_feats'].cuda(), batch_dict['map_mask'].cuda().bool() # [b, map_element_num-Max, 20, 5]   [b, map_element_num-Max, 20]
-        # if torch.isinf(map_polylines).any():
-        #     print("3"*100)
-        #     exit()
-
-        # if torch.isnan(map_polylines).any():
-        #     print("4"*100)
-        #     exit()
         agent_feats = self.agent_net(agent_polylines, agent_polylines_mask) # B,N,20,13 + B,N,20 -> [B,N,d_agent]
-        # if torch.isinf(agent_feats).any():
-        #     print("5"*100)
-        #     exit()
-
-        # if torch.isnan(agent_feats).any():
-        #     print("6"*100)
-        #     exit()
         map_feats = self.map_net(map_polylines, map_polylines_mask) # B,N,20,5 + B,N,20 -> [b, map_element_num-Max,d_map]
         
         rpe, rpe_mask = batch_dict['rpe'].cuda(), batch_dict['rpe_mask'].cuda().bool()
@@ -127,9 +104,6 @@ class Model(nn.Module):
         gt_vel_mode = batch_dict['gt_vel_mode'].cuda() # [b, all_n-Max]
         # agent traj decoder
         cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask)
-        if torch.isnan(param).any():
-            print("7"*100)
-            exit()
         bezier_control_points = param.view(param.shape[0],
                                            param.shape[1],
                                            param.shape[2], -1, 2) # # B,N,3M,n_order*2 -> B, N, 3m, n_order+1, 2
