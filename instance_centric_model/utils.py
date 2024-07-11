@@ -132,16 +132,23 @@ def count_trainable_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def print_model_summary(net, model_name):
+def print_model_summary(net, model_name,logger=None):
     """
     Print network name and parameters
     """
-    print(f"Model {model_name} is ready!")
-    print("Total number of parameters:", count_parameters(net))
-    print("Number of trainable parameters:", count_trainable_parameters(net))
-    print(f'Number of trainable parameters:{count_trainable_parameters(net)/(1024*1024):.2f}M')
-    print(f"Number of non-trainable parameters: "
-          f"{count_parameters(net) - count_trainable_parameters(net)}\n")
+    if logger == None:
+        print(f"Model {model_name} is ready!")
+        print("Total number of parameters:", count_parameters(net))
+        print("Number of trainable parameters:", count_trainable_parameters(net))
+        print(f'Number of trainable parameters:{count_trainable_parameters(net)/(1024*1024):.2f}M')
+        print(f"Number of non-trainable parameters: "
+            f"{count_parameters(net) - count_trainable_parameters(net)}\n")
+    else:
+        logger.info(f"Model {model_name} is ready!")
+        logger.info(f"Total number of parameters:{count_parameters(net)}")
+        logger.info(f"Number of trainable parameters:{count_trainable_parameters(net)}")
+        logger.info(f'Number of trainable parameters:{count_trainable_parameters(net)/(1024*1024):.2f}M')
+        logger.info(f"Number of non-trainable parameters: {count_parameters(net) - count_trainable_parameters(net)}\n")
             
 def find_trainable_layers(model, verbose=False):
     """

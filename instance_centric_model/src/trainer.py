@@ -248,7 +248,7 @@ class Trainer(object):
             'epoch': epoch,
             'model_state_dict': self.net.module.state_dict(),}, saved_model_name)
     
-    def train(self):
+    def train(self, logger= None):
         start_epoch = self.start_epoch
         # if self.args.train_part == "back":
         #     start_epoch = 1
@@ -261,7 +261,7 @@ class Trainer(object):
 
         if self.args.local_rank==0:
             # 输出模型的参数信息
-            print_model_summary(self.net, self.args.model_name)
+            print_model_summary(self.net, self.args.model_name, logger)
             # 要更新的参数
         params = find_trainable_layers(self.net)
         # 设置优化器

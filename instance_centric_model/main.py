@@ -21,7 +21,7 @@ def main():
     logger.info('**********************Start logging**********************')
     log_args_to_file(args, logger)
     processor = Trainer(args, logger)
-    processor.train()
+    processor.train(logger)
     logger.info('**********************End training**********************')
 if __name__ == '__main__':
     main()
