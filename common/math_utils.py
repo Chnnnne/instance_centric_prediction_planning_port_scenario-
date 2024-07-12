@@ -166,7 +166,8 @@ def calculate_distance_matrix(trajectories):
     for i in range(n):
         for j in range(i + 1, n):
             # 求轨迹i到轨迹j的距离， 距离的定义是：traj1中所有点到traj2投影的最大值
-            dist = calculate_trajectory_max_projection_distance_use_KDTree(trajectories[i], trajectories[j], kd_trees[j])
+            # dist = calculate_trajectory_max_projection_distance_use_KDTree(trajectories[i], trajectories[j], kd_trees[j])
+            dist = calculate_trajectory_max_projection_distance(trajectories[i], trajectories[j])
             # print("--"*100)
             # print(i,j,dist)
             # dist = calculate_trajectory_distance(trajectories[i], trajectories[j])

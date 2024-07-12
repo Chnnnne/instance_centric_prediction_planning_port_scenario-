@@ -515,12 +515,13 @@ class MapPointSeacher():
             except:
                 return -1, [0]
                 
-            agt_traj_fut_all_sample = np.column_stack((sampled_x, sampled_y))
+            agt_traj_fut_all_sample = np.column_stack((sampled_x, sampled_y)) # n,2
             # 计算 agt_traj_sample和候选ref逐一计算一个距离， 距离定义：
             errors = []
             weights = np.linspace(0.85,1.15,21)
             for idx, (refpath_cords, weight) in enumerate(zip(candidate_refpaths_cords, weights)):
-                dis = math_utils.calculate_trajectory_sum_projection_distance_use_KDTree(agt_traj_fut_all_sample,refpath_cords,kd_trees[idx])
+                # dis = math_utils.calculate_trajectory_sum_projection_distance_use_KDTree(agt_traj_fut_all_sample,refpath_cords,kd_trees[idx])
+                dis = math_utils.calculate_trajectory_max_projection_distance(agt_traj_fut_all_sample,refpath_cords)
                 errors.append(dis * weight)
 
             errors = np.asarray(errors,dtype=np.float32)

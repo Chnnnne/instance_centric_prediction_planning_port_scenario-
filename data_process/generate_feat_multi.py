@@ -903,20 +903,21 @@ if __name__=="__main__":
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    input_path = '/private2/wanggang/pre_log_inter_data'
-    # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
+    # input_path = '/private2/wanggang/pre_log_inter_data'
+    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
-    all_file_list = all_file_list[:int(len(all_file_list)/6)]
+    # all_file_list = all_file_list[:int(len(all_file_list)/10)]
+    all_file_list = all_file_list[:3]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
-    cur_files = train_files
+    cur_files = all_file_list
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     
     # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data_test_data_generate_latency/'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
-
+    start_time = time.time()
     pool = multiprocessing.Pool(processes=16)
     pool.map(load_seq_save_features, range(len(cur_files)))
 
@@ -926,8 +927,14 @@ if __name__=="__main__":
     #     load_seq_save_features(i)
 
     # print("###########完成###############")
-    # pool.close()
-    # pool.join()
+    pool.close()
+    pool.join()
+    # 结束计时
+    end_time = time.time()
+
+    # 计算并打印耗时
+    total_time = end_time - start_time
+    print("耗时",total_time)
     
 
 
