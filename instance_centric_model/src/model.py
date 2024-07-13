@@ -104,15 +104,13 @@ class Model(nn.Module):
         gt_vel_mode = batch_dict['gt_vel_mode'].cuda() # [b, all_n-Max]
         # agent traj decoder
         cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask)
-        bezier_control_points = param.view(param.shape[0],
+        trajs = param.view(param.shape[0],
                                            param.shape[1],
-                                           param.shape[2], -1, 2) # # B,N,3M,n_order*2 -> B, N, 3m, n_order+1, 2
-        trajs = torch.matmul(self.mat_T, bezier_control_points) # B,N,3m,future_steps,2
+                                           param.shape[2], -1, 2) # B,N,3M,50*2 -> B, N, 3m, 50, 2
         
-        bezier_control_points_with_gt = param_with_gt.view(param_with_gt.shape[0],
+        traj_with_gt = param_with_gt.view(param_with_gt.shape[0],
                                                            param_with_gt.shape[1],
-                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, n_order+1*2 ->B, N, 1, n_order+1, 2
-        traj_with_gt = torch.matmul(self.mat_T, bezier_control_points_with_gt) # B,N,1,future_steps,2
+                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, 50*2 ->B, N, 1, 50, 2
 
 
         #B,M,20,2      B,M,20,2        B       B,M      B,M
@@ -139,7 +137,7 @@ class Model(nn.Module):
 
         res = {"cand_refpath_probs": cand_refpath_probs, # B,N,M
                 "trajs": trajs, # B,N,3M,50,2
-                "param":param, #B,N,3M,(n_order+1)*2
+                "param":param, #B,N,3M,100
                 "traj_probs": traj_probs, # B,N,3M
                 "traj_with_gt": traj_with_gt,#B,N,1,50,2
                 "all_candidate_mask":all_candidate_mask, # B,N,3M
@@ -196,6 +194,55 @@ class Model(nn.Module):
             if m.bias_v is not None:
                 nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
         
+
+    def compute_model_metrics_wo_param(self, input_dict,output_dict):
+        '''
+            测试模型的ADE(mink_1)、FDE、mr、ahe、fhe
+        
+        '''
+        pred_mask = (input_dict['candidate_mask'].sum(dim=-1) > 0).cuda() # B,N,M-> B,N
+        T, D = 50, 2
+        gt_prob = input_dict['gt_candts'].cuda()[pred_mask]# B,N,M -> S,M
+        t_values = torch.linspace(0,1,50).cuda()
+        batch_size, N = pred_mask.shape
+        valid_batch_size, label_num = gt_prob.size() # S, M
+        k=3
+        traj_probs = output_dict['traj_probs'][pred_mask] # B, N, 3M -> S, 3M
+        trajs = output_dict['trajs'][pred_mask] # B, N, 3M, 50, 2 -> S, 3M, 50, 2
+        traj_gt = input_dict["gt_preds"].cuda()[pred_mask].unsqueeze(1) # B N 50 2 -> S,1,50,2
+
+        traj_topk_probs, traj_topk_indices = traj_probs.topk(k=3, dim=-1) # S,K
+        topk_trajs = trajs.gather(1, traj_topk_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,K,50,2
+
+        traj_top1_probs, traj_top1_indices = traj_probs.topk(k=1, dim=-1) #S,1
+        top1_trajs = trajs.gather(1, traj_top1_indices.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,T,D))# S,1,50,2
+
+        _, mink_ade = get_minK_ade(topk_trajs, traj_gt) # 1
+        _, min1_ade = get_minK_ade(top1_trajs, traj_gt) # 1
+        mink_fde_part, mink_fde = get_minK_fde(topk_trajs, traj_gt)
+        min1_fde_part, min1_fde = get_minK_fde(top1_trajs, traj_gt)
+        mink_brier_fde, brier_score = get_minK_brier_FDE(topk_trajs, traj_gt, traj_topk_probs)
+
+        mink_mr = get_minK_mr(mink_fde_part)
+        min1_mr = get_minK_mr(min1_fde_part)
+
+        mink_ahe = get_minK_ahe(topk_trajs, traj_gt) # S,K,50,2    S,1,50,2    -> 1
+        min1_ahe = get_minK_ahe(top1_trajs, traj_gt)
+        mink_fhe = get_minK_fhe(topk_trajs, traj_gt)
+        min1_fhe = get_minK_fhe(top1_trajs, traj_gt)
+
+        metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
+                      "mink_ade":(mink_ade,1), "min1_ade":(min1_ade,1), 
+                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_brier_fde":(mink_brier_fde, 1),  "brier_score":(brier_score, 1),
+                      "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
+                      "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
+                      "mink_fhe":(mink_fhe,1), "min1_fhe":(min1_fhe,1)
+                      }
+        return metric_dict
+
+
+
+
     def compute_model_metrics(self, input_dict, output_dict):
         '''
         对于ego和agent，计算的指标都是多模态轨迹中，选取了一条（根据prob或者score）计算的ade、fde、mr、jerk ，也称为 min ade、fde、mr、jerk

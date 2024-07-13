@@ -16,11 +16,11 @@ class TrajDecoder(nn.Module):
 
         self.motion_estimator_layer = nn.Sequential(
             ResMLP(input_size + refpath_dim + embed_dim, hidden_size, hidden_size), # 128+64+32
-            nn.Linear(hidden_size, (n_order+1)*2) # n阶贝塞尔曲线，有n+1个控制点
+            nn.Linear(hidden_size, 50 * 2) # n阶贝塞尔曲线，有n+1个控制点
         )
         
         self.traj_prob_layer = nn.Sequential(
-            ResMLP(input_size + (n_order+1)*2, hidden_size, hidden_size),
+            ResMLP(input_size + 50 * 2, hidden_size, hidden_size),
             nn.Linear(hidden_size, 1),
             nn.Softmax(dim=2)
         )
@@ -43,9 +43,9 @@ class TrajDecoder(nn.Module):
             - all_gt_refpath B,N,3M,     标志候选refpath(速度扩充后)的真值onehot
             - all_candidate_mask: B, N, 3M  标志候选refpath（速度扩充后）的有效性
             - cand_refpath_probs:   B,N,M 
-            - param:    B,N,3M,(n_order+1)*2
+            - param:    B,N,3M,100
             - traj_probs:       B, N, 3M
-            - param_with_gt:     B,N,1,(n_order+1)*2
+            - param_with_gt:     B,N,1,100
         """
         #可视化验证
         # self.vis_debug(candidate_refpaths_cords=candidate_refpaths_cords, candidate_refpaths_vecs=candidate_refpaths_vecs,gt_refpath=gt_refpath,candidate_mask=candidate_mask,batch_dict=batch_dict)
@@ -69,11 +69,11 @@ class TrajDecoder(nn.Module):
         # 2. 根据refpath生成traj
         param_input = torch.cat([feats_cand.repeat_interleave(repeats=3,dim=2),self.vel_emb.repeat(B,N,M,1)], dim=-1)# B,N,3m,D+64+emd_dim
 
-        param = self.motion_estimator_layer(param_input) # B,N,3M,(n_order+1)*2 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
+        param = self.motion_estimator_layer(param_input) # B,N,3M,100 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
 
 
         # 3. 给traj打分
-        prob_input = torch.cat([agent_feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + (n_order+1)*2
+        prob_input = torch.cat([agent_feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + 100
         traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, 3M   打分 空的parm和特征数据也会打分，做了softmax但没做mask，因此没mask的位置也会有概率评分
         traj_probs = self.masked_softmax(traj_prob_tensor, all_candidate_mask, dim = -1) # B,N,3M + B,N,3M
  
