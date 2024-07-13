@@ -250,17 +250,22 @@ class Model(nn.Module):
 
         mink_mr = get_minK_mr(mink_fde_part)
         min1_mr = get_minK_mr(min1_fde_part)
-        mink_RMS_jerk = get_minK_jerk(topk_param,t_values)
-        min1_RMS_jerk = get_minK_jerk(top1_param,t_values)
+        mink_RMS_jerk = calculate_jerk_new(topk_trajs)
+        min1_RMS_jerk = calculate_jerk_new(top1_trajs)
 
-        # 计算curvature、lateral
 
         # 计算pred_agent_yaw、 agent_gt_yaw
         mink_ahe = get_minK_ahe(topk_trajs, traj_gt) # S,K,50,2    S,1,50,2    -> 1
         min1_ahe = get_minK_ahe(top1_trajs, traj_gt)
         mink_fhe = get_minK_fhe(topk_trajs, traj_gt)
         min1_fhe = get_minK_fhe(top1_trajs, traj_gt)
-        
+
+
+        # 计算curvature、lateral
+        mink_curvature = calculate_curvature_new(topk_trajs)
+        min1_curvature = calculate_curvature_new(top1_trajs)
+        mink_lateral_acceleration = calculate_lateral_new(topk_trajs)
+        min1_lateral_acceleration = calculate_lateral_new(top1_trajs)
         #######################################################################################
         # 规划指标
         #######################################################################################
@@ -301,8 +306,10 @@ class Model(nn.Module):
         plan_mink_mr = get_minK_mr(plan_mink_fde_part)
         plan_min1_mr = get_minK_mr(plan_min1_fde_part)
         # jerk
-        plan_mink_RMS_jerk = get_minK_jerk(plan_topk_param,t_values) 
-        plan_min1_RMS_jerk = get_minK_jerk(plan_top1_param,t_values) 
+        # plan_mink_RMS_jerk = get_minK_jerk(plan_topk_param,t_values) 
+        # plan_min1_RMS_jerk = get_minK_jerk(plan_top1_param,t_values) 
+        plan_mink_RMS_jerk = calculate_jerk_new(plan_topk_traj)
+        plan_min1_RMS_jerk = calculate_jerk_new(plan_top1_traj)
         # collision 指标
         agent_vecs = input_dict['agent_vecs'].cuda() # B,N,2
         agent_ctrs = input_dict['agent_ctrs'].cuda() # B,N,2
@@ -316,23 +323,30 @@ class Model(nn.Module):
         agent_dist = agent_min_dist.sum(-1)
         
         # curvature/lateral
-        plan_vec_param = bezier_derivative(plan_top1_param) # B,1,n+1,2 -> B,1,n,2
-        plan_vec_vectors = bezier_curve(plan_vec_param, t_values)/5 # B,1,n_order,2 -> B,1,50,2
-        plan_vec_scaler = torch.linalg.norm(plan_vec_vectors, dim=-1) # B,1,50
+        # plan_vec_param = bezier_derivative(plan_top1_param) # B,1,n+1,2 -> B,1,n,2
+        # plan_vec_vectors = bezier_curve(plan_vec_param, t_values)/5 # B,1,n_order,2 -> B,1,50,2
+        # plan_vec_scaler = torch.linalg.norm(plan_vec_vectors, dim=-1) # B,1,50
 
-        plan_acc_param = bezier_derivative(plan_vec_param) # B,1,n-1, 2
-        plan_acc_vectors = bezier_curve(plan_acc_param, t_values)/25 # B, 1,n_order-1,2 -> B,1,50,2
+        # plan_acc_param = bezier_derivative(plan_vec_param) # B,1,n-1, 2
+        # plan_acc_vectors = bezier_curve(plan_acc_param, t_values)/25 # B, 1,n_order-1,2 -> B,1,50,2
 
-        plan_vx, plan_vy = plan_vec_vectors[...,0], plan_vec_vectors[...,1]# B,1,50
-        plan_ax, plan_ay = plan_acc_vectors[...,0], plan_acc_vectors[...,1]
-        epsilon = 1e-4
-        plan_curvature = torch.abs(plan_vx * plan_ay - plan_vy * plan_ax)/((plan_vx**2 + plan_vy**2+epsilon)**1.5) #B,1,50
-        plan_lateral_acceleration = (plan_vec_scaler**2 * plan_curvature).mean(-1).min(dim=-1).values.sum(-1)
-        plan_curvature = plan_curvature.mean(-1).min(dim=-1).values.sum()# 1
-
+        # plan_vx, plan_vy = plan_vec_vectors[...,0], plan_vec_vectors[...,1]# B,1,50
+        # plan_ax, plan_ay = plan_acc_vectors[...,0], plan_acc_vectors[...,1]
+        # epsilon = 1e-4
+        # plan_curvature = torch.abs(plan_vx * plan_ay - plan_vy * plan_ax)/((plan_vx**2 + plan_vy**2+epsilon)**1.5) #B,1,50
+        # plan_lateral_acceleration = (plan_vec_scaler**2 * plan_curvature).mean(-1).min(dim=-1).values.sum(-1)
+        # plan_curvature = plan_curvature.mean(-1).min(dim=-1).values.sum()# 1
+        plan_mink_curvature = calculate_curvature_new(plan_topk_traj)
+        plan_min1_curvature = calculate_curvature_new(plan_top1_traj)
+        plan_mink_lateral_acceleration = calculate_lateral_new(plan_topk_traj)
+        plan_min1_lateral_acceleration = calculate_lateral_new(plan_top1_traj)
         # ahe/fhe
+        plan_mink_ahe = get_minK_ahe(plan_topk_traj, ego_gt_traj)
         plan_min1_ahe = get_minK_ahe(plan_top1_traj,ego_gt_traj)
+
+        plan_mink_fhe = get_minK_fhe(plan_topk_traj, ego_gt_traj)
         plan_min1_fhe = get_minK_fhe(plan_top1_traj,ego_gt_traj)
+
 
 
         '''
@@ -358,21 +372,129 @@ class Model(nn.Module):
         metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
                       "target_top":(target_top, 1), 
                       "mink_ade":(mink_ade,1), "min1_ade":(min1_ade,1), 
-                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_brier_fde":(mink_brier_fde, 1),  "brier_score":(brier_score, 1),
+                      "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), 
+                      "mink_brier_fde":(mink_brier_fde, 1),  "brier_score":(brier_score, 1),
                       "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
-                      "mink_RMS_jerk": (mink_RMS_jerk,1), "min1_RMS_jerk":(min1_RMS_jerk,1), 
                       "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
                       "mink_fhe":(mink_fhe,1), "min1_fhe":(min1_fhe,1),
+                      "mink_RMS_jerk": (mink_RMS_jerk,1), "min1_RMS_jerk":(min1_RMS_jerk,1), 
+                      "mink_curvature":(mink_curvature,1), "min1_curvature":(min1_curvature,1),
+                      "mink_lateral_acceleration":(mink_lateral_acceleration, 1), "min1_lateral_acceleration":(min1_lateral_acceleration, 1),
+
                       
                       "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
                       "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), "plan_mink_brier_fde":(plan_mink_brier_fde,2), "plan_brier_score":(plan_brier_score, 2),
                       "plan_mink_mr":(plan_mink_mr, 2),"plan_min1_mr":(plan_min1_mr,2),
+                      "plan_mink_ahe":(plan_mink_ahe, 2),"plan_min1_ahe":(plan_min1_ahe,2),
+                      "plan_mink_fhe":(plan_mink_fhe, 2),"plan_min1_fhe":(plan_min1_fhe,2),
                       "plan_mink_RMS_jerk":(plan_mink_RMS_jerk,2),"plan_min1_RMS_jerk":(plan_min1_RMS_jerk,2), 
-                      "risk_num":(risk_num,2),"agent_dist":(agent_dist,2),
-                      "plan_curvature":(plan_curvature,2),"plan_lateral_acceleration":(plan_lateral_acceleration,2),
-                      "plan_min1_ahe":(plan_min1_ahe,2),"plan_min1_fhe":(plan_min1_fhe,2)}
+                      "plan_mink_curvature":(plan_mink_curvature, 2),"plan_min1_curvature":(plan_min1_curvature,2),
+                      "plan_mink_lateral_acceleration":(plan_mink_lateral_acceleration,2),"plan_min1_lateral_acceleration":(plan_min1_lateral_acceleration,2),
+                      "risk_num":(risk_num,2),"agent_dist":(agent_dist,2)
+                      }
         return metric_dict
+    
+def calculate_jerk_new(trajectories):
+    """
+    计算批量轨迹的 jerk（加加速度）。
+    
+    参数:
+    - trajectories: 形状为 [B, N, 50, 2] 的张量，表示 B 个批次、每批 N 个汽车、每辆汽车 50 帧的轨迹数据。
+    
+    返回:
+    """
+    B, N, T, _ = trajectories.shape
 
+    # 提取 x 和 y 坐标
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+
+    # 计算一阶导数（速度）
+    dx = torch.gradient(x, dim=2)[0]
+    dy = torch.gradient(y, dim=2)[0]
+
+    # 计算二阶导数（加速度）
+    ddx = torch.gradient(dx, dim=2)[0]
+    ddy = torch.gradient(dy, dim=2)[0]
+
+    # 计算三阶导数（jerk）
+    dddx = torch.gradient(ddx, dim=2)[0]
+    dddy = torch.gradient(ddy, dim=2)[0]
+
+    # 计算 jerk 的大小
+    jerk = torch.sqrt(dddx**2 + dddy**2)# B,W,50
+    jerk_RMS = torch.sqrt(torch.mean(jerk**2, dim=-1)).min(dim=-1).values #  ->B
+    jerk_RMS = jerk_RMS.sum(-1)
+    return jerk_RMS
+
+
+
+def calculate_curvature_new(trajectories):
+    """
+    计算批量轨迹的曲率。
+    参数:
+    - trajectories: 形状为 [B, N, 50, 2] 的张量，表示 B 个批次、每批 N 个汽车、每辆汽车 50 帧的轨迹数据。
+    返回:
+    """
+    B, N, T, _ = trajectories.shape # B,W,50,2
+
+    # 提取 x 和 y 坐标
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+
+    # 计算一阶导数
+    dx = torch.gradient(x, dim=2)[0]
+    dy = torch.gradient(y, dim=2)[0]
+
+    # 计算二阶导数
+    ddx = torch.gradient(dx, dim=2)[0]
+    ddy = torch.gradient(dy, dim=2)[0]
+
+    # 计算曲率
+    curvature = torch.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2 + 1e-8)**1.5 # B,W,50
+    curvature = torch.clamp(curvature,-2,2)
+    curvature = curvature.mean(-1).min(-1).values.sum(-1) # B,W,50->B->1
+    return curvature
+
+def calculate_lateral_new(trajectories):
+    """
+    计算批量轨迹的横向加速度。
+    
+    参数:
+    - trajectories: 形状为 [B, N, 50, 2] 的张量，表示 B 个批次、每批 N 个汽车、每辆汽车 50 帧的轨迹数据。
+    
+    返回:
+    """
+    B, N, T, _ = trajectories.shape
+
+    # 提取 x 和 y 坐标
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+
+    # 计算一阶导数（速度）
+    dx = torch.gradient(x, dim=2)[0]
+    dy = torch.gradient(y, dim=2)[0]
+
+    # 计算二阶导数（加速度）
+    ddx = torch.gradient(dx, dim=2)[0]
+    ddy = torch.gradient(dy, dim=2)[0]
+
+    # 计算速度的模
+    speed = torch.sqrt(dx**2 + dy**2)
+
+    # 计算单位切向量
+    tangent_x = dx / (speed + 1e-8)
+    tangent_y = dy / (speed + 1e-8)
+
+    # 计算加速度在切向量方向上的分量
+    accel_tangent_component = ddx * tangent_x + ddy * tangent_y
+
+    # 计算加速度在切向量垂直方向上的分量（横向加速度）
+    lateral_acc = torch.sqrt((ddx - accel_tangent_component * tangent_x)**2 + 
+                             (ddy - accel_tangent_component * tangent_y)**2) # B,W,50
+    lateral_acc = lateral_acc.mean(-1).min(-1).values.sum(-1)
+
+    return lateral_acc
 
 def score_to_prob(scores):
     # scores B,3M
