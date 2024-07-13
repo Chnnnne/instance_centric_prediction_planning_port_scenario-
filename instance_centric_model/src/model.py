@@ -231,12 +231,20 @@ class Model(nn.Module):
         mink_fhe = get_minK_fhe(topk_trajs, traj_gt)
         min1_fhe = get_minK_fhe(top1_trajs, traj_gt)
 
+        curvature_mink = calculate_curvature(topk_trajs)
+        curvature_min1 = calculate_curvature(top1_trajs)
+
+        RMS_jerk_mink = calculate_jerk(topk_trajs)
+        RMS_jerk_min1 =calculate_jerk(top1_trajs)
+
         metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
                       "mink_ade":(mink_ade,1), "min1_ade":(min1_ade,1), 
                       "mink_fde":(mink_fde,1), "min1_fde":(min1_fde,1), "mink_brier_fde":(mink_brier_fde, 1),  "brier_score":(brier_score, 1),
                       "mink_mr":(mink_mr,1), "min1_mr":(min1_mr,1), 
                       "mink_ahe":(mink_ahe,1), "min1_ahe": (min1_ahe,1),
-                      "mink_fhe":(mink_fhe,1), "min1_fhe":(min1_fhe,1)
+                      "mink_fhe":(mink_fhe,1), "min1_fhe":(min1_fhe,1),
+                      "curvature_mink":(curvature_mink,1), "curvature_min1":(curvature_min1,1),
+                      "RMS_jerk_mink":(RMS_jerk_mink,1), "RMS_jerk_min1":(RMS_jerk_min1,1)
                       }
         return metric_dict
 
@@ -420,6 +428,67 @@ class Model(nn.Module):
                       "plan_min1_ahe":(plan_min1_ahe,2),"plan_min1_fhe":(plan_min1_fhe,2)}
         return metric_dict
 
+
+def calculate_jerk_new(trajectories):
+    """
+    计算批量轨迹的 jerk（加加速度）。
+    
+    参数:
+    - trajectories: 形状为 [B, N, 50, 2] 的张量，表示 B 个批次、每批 N 个汽车、每辆汽车 50 帧的轨迹数据。
+    
+    返回:
+    """
+    B, N, T, _ = trajectories.shape
+
+    # 提取 x 和 y 坐标
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+
+    # 计算一阶导数（速度）
+    dx = torch.gradient(x, dim=2)[0]
+    dy = torch.gradient(y, dim=2)[0]
+
+    # 计算二阶导数（加速度）
+    ddx = torch.gradient(dx, dim=2)[0]
+    ddy = torch.gradient(dy, dim=2)[0]
+
+    # 计算三阶导数（jerk）
+    dddx = torch.gradient(ddx, dim=2)[0]
+    dddy = torch.gradient(ddy, dim=2)[0]
+
+    # 计算 jerk 的大小
+    jerk = torch.sqrt(dddx**2 + dddy**2)# B,W,50
+    jerk_RMS = torch.mean(jerk**2, dim=-1).min(dim=-1).values #  ->B
+    jerk_RMS = jerk_RMS.sum(-1)
+    return jerk_RMS
+
+
+
+def calculate_curvature_new(trajectories):
+    """
+    计算批量轨迹的曲率。
+    参数:
+    - trajectories: 形状为 [B, N, 50, 2] 的张量，表示 B 个批次、每批 N 个汽车、每辆汽车 50 帧的轨迹数据。
+    返回:
+    """
+    B, N, T, _ = trajectories.shape # B,W,50,2
+
+    # 提取 x 和 y 坐标
+    x = trajectories[..., 0]
+    y = trajectories[..., 1]
+
+    # 计算一阶导数
+    dx = torch.gradient(x, dim=2)[0]
+    dy = torch.gradient(y, dim=2)[0]
+
+    # 计算二阶导数
+    ddx = torch.gradient(dx, dim=2)[0]
+    ddy = torch.gradient(dy, dim=2)[0]
+
+    # 计算曲率
+    curvature = torch.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2 + 1e-8)**1.5 # B,W,50
+    curvature = curvature.mean(-1).min(-1).values.sum(-1) # B,W,50->B->1
+    return curvature
 
 def score_to_prob(scores):
     # scores B,3M

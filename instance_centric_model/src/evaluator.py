@@ -358,7 +358,7 @@ class Evaluator(object):
                         input_dict = next(dataloader_iter)
                     output_dict = self.net(input_dict)
                     
-                    metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
+                    metric_dict = self.net.module.compute_model_metrics_wo_param(input_dict, output_dict)
                     for key,val in metric_dict.items():
                         res_dict[key] += torch.as_tensor(val[0],device='cuda')
 
@@ -542,7 +542,7 @@ if __name__ == "__main__":
         set_seed(seed_value=7777)
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-28 17:13:02_back/saved_models"
-    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-12 08:54:33_front_6/saved_models"
+    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-12 18:59:30_front_mlp_traj_decoder/saved_models"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
     pts = pts[::-1]
