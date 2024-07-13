@@ -7,6 +7,10 @@ class TrajDecoder(nn.Module):
     def __init__(self, input_size, hidden_size, n_order=7, m=50, refpath_dim = 64,embed_dim = 32):
         super().__init__()
         self.m = m
+        # monomial basis polynomial
+        # a3, a2, a1, a0.   x=a3t^3 + a2t^2 + a1t^1 + a0
+        # b3, b2, b1, b0.   y=b3t^3 + b2t^2 + b1t^1 + b0
+        mbp_coff_num = 8
 
         self.cand_refpath_prob_layer = nn.Sequential(
             ResMLP(input_size + refpath_dim, hidden_size, hidden_size),# 128+64
@@ -16,11 +20,11 @@ class TrajDecoder(nn.Module):
 
         self.motion_estimator_layer = nn.Sequential(
             ResMLP(input_size + refpath_dim + embed_dim, hidden_size, hidden_size), # 128+64+32
-            nn.Linear(hidden_size, 50 * 2) # n阶贝塞尔曲线，有n+1个控制点
+            nn.Linear(hidden_size, mbp_coff_num) # n阶贝塞尔曲线，有n+1个控制点
         )
         
         self.traj_prob_layer = nn.Sequential(
-            ResMLP(input_size + 50 * 2, hidden_size, hidden_size),
+            ResMLP(input_size + mbp_coff_num, hidden_size, hidden_size),
             nn.Linear(hidden_size, 1),
             nn.Softmax(dim=2)
         )
@@ -69,17 +73,17 @@ class TrajDecoder(nn.Module):
         # 2. 根据refpath生成traj
         param_input = torch.cat([feats_cand.repeat_interleave(repeats=3,dim=2),self.vel_emb.repeat(B,N,M,1)], dim=-1)# B,N,3m,D+64+emd_dim
 
-        param = self.motion_estimator_layer(param_input) # B,N,3M,100 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
+        param = self.motion_estimator_layer(param_input) # B,N,3M,8 空的数据也会预测轨迹，可由下面的prob做mask，因为prob为0的轨迹忽略,输出轨迹也没事
 
 
         # 3. 给traj打分
-        prob_input = torch.cat([agent_feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + 100
+        prob_input = torch.cat([agent_feats_repeat.repeat(1,1,3,1), param], dim=-1) # B, N, 3M, D + 8
         traj_prob_tensor = self.traj_prob_layer(prob_input).squeeze(-1) # B, N, 3M   打分 空的parm和特征数据也会打分，做了softmax但没做mask，因此没mask的位置也会有概率评分
         traj_probs = self.masked_softmax(traj_prob_tensor, all_candidate_mask, dim = -1) # B,N,3M + B,N,3M
  
         
         # 预测轨迹(teacher_force)
-        param_with_gt = param[all_gt_refpath==1].unsqueeze(1).reshape(B,N,1,-1) #  B,N,3M,(n_order+1)*2 -> [B*N, (n_order+1)*2] -> [B,N,1,(n_order+1)*2]
+        param_with_gt = param[all_gt_refpath==1].unsqueeze(1).reshape(B,N,1,-1) #  B,N,3M,8 -> [B*N, 8] -> [B,N,1,8]
   
         return cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask
     

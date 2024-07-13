@@ -104,13 +104,15 @@ class Model(nn.Module):
         gt_vel_mode = batch_dict['gt_vel_mode'].cuda() # [b, all_n-Max]
         # agent traj decoder
         cand_refpath_probs, param, traj_probs, param_with_gt,all_candidate_mask = self.traj_decoder(agent_feats, refpath_feats, gt_refpath, gt_vel_mode, candidate_mask)
-        trajs = param.view(param.shape[0],
-                                           param.shape[1],
-                                           param.shape[2], -1, 2) # B,N,3M,50*2 -> B, N, 3m, 50, 2
-        
-        traj_with_gt = param_with_gt.view(param_with_gt.shape[0],
-                                                           param_with_gt.shape[1],
-                                                           param_with_gt.shape[2], -1, 2) # B, N, 1, 50*2 ->B, N, 1, 50, 2
+        # param B,N,3M,8
+        x_cords = self.get_axis_cord(param[...,:4]) # B,N,3M,50
+        y_cords = self.get_axis_cord(param[...,4:]) # B,N,3M,50
+        trajs = torch.cat([x_cords.unsqueeze(-1), y_cords.unsqueeze(-1)],dim=-1) #B,N,3M,50,1 *2-> B,N,3M,50,2
+
+        # param_with_gt B,N,1,8
+        x_cords_gt = self.get_axis_cord(param_with_gt[...,:4]) # B,N,1,50
+        y_cords_gt = self.get_axis_cord(param_with_gt[...,4:]) # B,N,1,50
+        traj_with_gt = torch.cat([x_cords_gt.unsqueeze(-1), y_cords_gt.unsqueeze(-1)],dim=-1) #B,N,1,50,1 *2-> B,N,1,50,2
 
 
         #B,M,20,2      B,M,20,2        B       B,M      B,M
@@ -137,7 +139,7 @@ class Model(nn.Module):
 
         res = {"cand_refpath_probs": cand_refpath_probs, # B,N,M
                 "trajs": trajs, # B,N,3M,50,2
-                "param":param, #B,N,3M,100
+                "param":param, #B,N,3M,8
                 "traj_probs": traj_probs, # B,N,3M
                 "traj_with_gt": traj_with_gt,#B,N,1,50,2
                 "all_candidate_mask":all_candidate_mask, # B,N,3M
@@ -193,7 +195,23 @@ class Model(nn.Module):
                 nn.init.normal_(m.bias_k, mean=0.0, std=0.02)
             if m.bias_v is not None:
                 nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
-        
+
+    def get_axis_cord(self, coef):
+        '''
+        input: 
+            - coef: B,N,3M,4
+            - t_vals: 50]
+        return: B,N,3M,50,1
+        '''
+        b,n,m,_ = coef.shape
+        t_vals = torch.linspace(0,5,50).cuda()# 50
+        t_vals_expanded = t_vals.view(1, 1, 1, -1).expand(b, n, m, -1).cuda() # b,n,3m,50
+        a3 = coef[...,0].unsqueeze(-1) # B,N,3M，1
+        a2 = coef[...,1].unsqueeze(-1)
+        a1 = coef[...,2].unsqueeze(-1)
+        a0 = coef[...,3].unsqueeze(-1)
+        x_coords = a3 * t_vals_expanded**3 + a2 * t_vals_expanded**2 + a1 * t_vals_expanded + a0 # B,N,3M,50
+        return x_coords
 
     def compute_model_metrics_wo_param(self, input_dict,output_dict):
         '''
