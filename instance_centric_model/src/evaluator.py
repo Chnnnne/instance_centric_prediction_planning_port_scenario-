@@ -15,7 +15,7 @@ from utils import print_model_summary, find_trainable_layers, add_dict_prefix, f
 from src.data_loader import get_ddp_dataloader
 
 class Evaluator(object):
-    def __init__(self, args, logger):
+    def __init__(self, args, logger, test_latency=False):
         self.args = args
         self.logger = logger
         self.tb_log = SummaryWriter(log_dir=args.tensorboard_dir) if args.local_rank == 0 and self.args.enable_log else None
@@ -23,7 +23,7 @@ class Evaluator(object):
         self.data_loaders = dict()
         self.samplers = dict()
         for set_name in ['train', 'test']:
-            self.data_loaders[set_name], self.samplers[set_name] = get_ddp_dataloader(args, set_name=set_name)
+            self.data_loaders[set_name], self.samplers[set_name] = get_ddp_dataloader(args, set_name=set_name, test_latency=test_latency)
             
         self.net = self._initialize_network(args.model_name)
         if not args.without_sync_bn:
@@ -38,6 +38,7 @@ class Evaluator(object):
         self.net = self.net.cuda()
         self.net = torch.nn.parallel.DistributedDataParallel(self.net, 
                                                     device_ids=[self.args.local_rank],find_unused_parameters=False)
+        self.net.eval()
 
 
     
@@ -243,6 +244,7 @@ class Evaluator(object):
     def _evaluate_loop(self, pts):
         phase_name = 'test'
         torch.cuda.empty_cache()
+        self.net.eval()
         for pt in pts:
             torch.cuda.empty_cache()
             self._evaluate_pt(pt)
@@ -346,18 +348,19 @@ class Evaluator(object):
 
         total_iter_each_epoch = len(self.data_loaders[mode])
         dataloader_iter = iter(self.data_loaders[mode])
-        with tqdm.trange(0, total_iter_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
-            for cur_it in pbar:# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
-                try:
-                    input_dict = next(dataloader_iter)
-                except StopIteration:
-                    dataloader_iter = iter(self.data_loaders['test'])
-                    input_dict = next(dataloader_iter)
-                output_dict = self.net(input_dict)
-                
-                metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
-                for key,val in metric_dict.items():
-                    res_dict[key] += torch.as_tensor(val[0],device='cuda')
+        with torch.no_grad():
+            with tqdm.trange(0, total_iter_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
+                for cur_it in pbar:# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
+                    try:
+                        input_dict = next(dataloader_iter)
+                    except StopIteration:
+                        dataloader_iter = iter(self.data_loaders['test'])
+                        input_dict = next(dataloader_iter)
+                    output_dict = self.net(input_dict)
+                    
+                    metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
+                    for key,val in metric_dict.items():
+                        res_dict[key] += torch.as_tensor(val[0],device='cuda')
 
 
         dist.barrier()
@@ -385,28 +388,174 @@ class Evaluator(object):
             #     self._save_checkpoint(epoch, best_epoch=True)  # save model
             #     self.logger.info(f"Saved best checkpoint at epoch {epoch}")
 
+    @torch.no_grad()
+    def test_latency(self, pt, mode='test'):
+        """
+        在测试集上对模型进行验证，计算准确率和对应的损失
+        """
+        print(f"evaluate {pt} 's latency")
+        torch.cuda.empty_cache()
+        self._load_or_restart("eval", pt)
+        self.net.eval()  # evaluation mode
+        res_dict = defaultdict(lambda: torch.tensor(0.0).cuda())
 
-        
+
+        with torch.no_grad():
+
+            torch.manual_seed(42)
+            ego_refpath_num = 2
+            agent_refpath_num = 5
+            target_agent_num = 2
+            all_agent_num = 1
+            map_elem_num = 1
+            instance_num = all_agent_num + map_elem_num
+            circle_num = 600
+            times = torch.zeros(circle_num) # 一次iter 的耗时
+            device = torch.device("cuda")
+            input_dict = {"agent_ctrs":torch.rand(1,all_agent_num,2, device=device),
+                          "agent_vecs":torch.rand(1,all_agent_num,2, device=device),
+                          "agent_feats":torch.rand(1,all_agent_num,20,13, device=device),
+                          "agent_mask":torch.randint(1,2,(1,all_agent_num,20), device=device),
+
+                          "ego_refpath_cords":torch.rand(1, ego_refpath_num, 20, 2, device=device),
+                          "ego_refpath_vecs":torch.rand(1, ego_refpath_num, 20, 2, device=device),
+                          "ego_vel_mode":torch.randint(1,3,(1,), device=device),
+                          "ego_gt_cand":torch.rand(1,ego_refpath_num, device=device),
+                          "ego_gt_traj":torch.rand(1,50,2, device=device),
+                          "ego_cand_mask": torch.randint(1,2,(1, ego_refpath_num), device=device),
+
+                          "candidate_refpaths_cords":torch.rand(1, all_agent_num, agent_refpath_num, 20, 2, device=device),
+                          "candidate_refpaths_vecs":torch.rand(1, all_agent_num, agent_refpath_num, 20, 2, device=device),
+                          "gt_preds":torch.rand(1,all_agent_num,50,2, device=device),
+                          "gt_vel_mode":torch.randint(1,3,(1, all_agent_num), device=device),
+                          "gt_candts":torch.rand(1,all_agent_num, agent_refpath_num, device=device),
+                          "candidate_mask":torch.randint(1,2,(1, all_agent_num, agent_refpath_num), device=device),
+
+                          "map_ctrs":torch.rand(1, map_elem_num, 2, device=device),
+                          "map_vecs":torch.rand(1, map_elem_num, 2, device=device),
+                          "map_feats":torch.rand(1, map_elem_num, 20, 5, device=device),
+                          "map_mask":torch.randint(1,2,(1, map_elem_num, 20), device=device),
+                          "rpe":torch.rand(1, instance_num, instance_num, 5, device=device),
+                          "rpe_mask":torch.randint(1,2,(1, instance_num, instance_num), device=device),
+                          }
+            for cur_it in tqdm.tqdm(range(circle_num)):# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
+                torch.cuda.synchronize()
+                start_time = time.perf_counter()
+                output_dict = self.net(input_dict)
+                torch.cuda.synchronize()
+                end_time = time.perf_counter()
+                times[cur_it] = end_time - start_time
+                # scenes[cur_it] = input_dict['agent_ctrs'].shape[0]
+                # target_actors[cur_it] = torch.sum(input_dict['candidate_mask'].sum(-1) > 0) # b,N,M -> b,N -> 1
+                # actors[cur_it] = torch.sum(input_dict['agent_mask'].sum(-1) > 0) # b,N,20 -> b,N -> 1
+                # mapors[cur_it] = torch.sum(input_dict['map_mask'].sum(-1) > 0) # b,N,20 -> b,N -> 1
+                # instances[cur_it] = mapors[cur_it] + actors[cur_it]
+                
+                # metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
+                # for key,val in metric_dict.items():
+                #     res_dict[key] += torch.as_tensor(val[0],device='cuda')
+            print(times)
+            print(times[10:].mean(-1).item())
+
+    @torch.no_grad()
+    def test_latency_for_instances(self, pt, mode='test'):
+        logger.info(f"\ninstance_num,all_agent_num,map_elem_num,agent_refpath_num,mean_time")
+
+        """
+        在测试集上对模型进行验证，计算准确率和对应的损失
+        """
+        print(f"evaluate {pt} 's latency")
+        torch.cuda.empty_cache()
+        self._load_or_restart("eval", pt)
+        self.net.eval()  # evaluation mode
+        res_dict = defaultdict(lambda: torch.tensor(0.0).cuda())
+
+
+        torch.manual_seed(42)
+        with torch.no_grad():
+            for instance_num in range(20,200):
+                all_agent_num = int(instance_num*0.22)
+                map_elem_num = instance_num - all_agent_num
+                agent_refpath_num = int(instance_num/12)
+                ego_refpath_num = 2
+                # agent_refpath_num = 5
+                target_agent_num = 2
+                # all_agent_num = 1
+                # map_elem_num = 1
+                # instance_num = all_agent_num + map_elem_num
+                circle_num = 600
+                times = torch.zeros(circle_num) # 一次iter 的耗时
+                device = torch.device("cuda")
+                input_dict = {"agent_ctrs":torch.rand(1,all_agent_num,2, device=device),
+                            "agent_vecs":torch.rand(1,all_agent_num,2, device=device),
+                            "agent_feats":torch.rand(1,all_agent_num,20,13, device=device),
+                            "agent_mask":torch.randint(1,2,(1,all_agent_num,20), device=device),
+
+                            "ego_refpath_cords":torch.rand(1, ego_refpath_num, 20, 2, device=device),
+                            "ego_refpath_vecs":torch.rand(1, ego_refpath_num, 20, 2, device=device),
+                            "ego_vel_mode":torch.randint(1,3,(1,), device=device),
+                            "ego_gt_cand":torch.rand(1,ego_refpath_num, device=device),
+                            "ego_gt_traj":torch.rand(1,50,2, device=device),
+                            "ego_cand_mask": torch.randint(1,2,(1, ego_refpath_num), device=device),
+
+                            "candidate_refpaths_cords":torch.rand(1, all_agent_num, agent_refpath_num, 20, 2, device=device),
+                            "candidate_refpaths_vecs":torch.rand(1, all_agent_num, agent_refpath_num, 20, 2, device=device),
+                            "gt_preds":torch.rand(1,all_agent_num,50,2, device=device),
+                            "gt_vel_mode":torch.randint(1,3,(1, all_agent_num), device=device),
+                            "gt_candts":torch.rand(1,all_agent_num, agent_refpath_num, device=device),
+                            "candidate_mask":torch.randint(1,2,(1, all_agent_num, agent_refpath_num), device=device),
+
+                            "map_ctrs":torch.rand(1, map_elem_num, 2, device=device),
+                            "map_vecs":torch.rand(1, map_elem_num, 2, device=device),
+                            "map_feats":torch.rand(1, map_elem_num, 20, 5, device=device),
+                            "map_mask":torch.randint(1,2,(1, map_elem_num, 20), device=device),
+                            "rpe":torch.rand(1, instance_num, instance_num, 5, device=device),
+                            "rpe_mask":torch.randint(1,2,(1, instance_num, instance_num), device=device),
+                            }
+                for cur_it in tqdm.tqdm(range(circle_num)):# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
+                    torch.cuda.synchronize()
+                    start_time = time.perf_counter()
+                    output_dict = self.net(input_dict)
+                    torch.cuda.synchronize()
+                    end_time = time.perf_counter()
+                    times[cur_it] = end_time - start_time
+                    # scenes[cur_it] = input_dict['agent_ctrs'].shape[0]
+                    # target_actors[cur_it] = torch.sum(input_dict['candidate_mask'].sum(-1) > 0) # b,N,M -> b,N -> 1
+                    # actors[cur_it] = torch.sum(input_dict['agent_mask'].sum(-1) > 0) # b,N,20 -> b,N -> 1
+                    # mapors[cur_it] = torch.sum(input_dict['map_mask'].sum(-1) > 0) # b,N,20 -> b,N -> 1
+                    # instances[cur_it] = mapors[cur_it] + actors[cur_it]
+                    
+                    # metric_dict = self.net.module.compute_model_metrics(input_dict, output_dict)
+                    # for key,val in metric_dict.items():
+                    #     res_dict[key] += torch.as_tensor(val[0],device='cuda')
+                logger.info(f"{instance_num},{all_agent_num},{map_elem_num},{agent_refpath_num},{times[10:].mean(-1).item()}")
+                # print(times)
+                # print(times[10:].mean(-1).item())
+
+
+ 
         
 if __name__ == "__main__":
     args = main_parser_for_evel()
     total_gpus, args.local_rank = init_dist_pytorch(args.local_rank, backend='nccl')
     if args.reproducibility:
         set_seed(seed_value=7777)
-    # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-25 11:30:09_front/saved_models"
-    pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-26 20:44:41_back/saved_models/"
+    pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
+    # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-28 17:13:02_back/saved_models"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
     pts = pts[::-1]
-    pts = [pt for pt in pts if pt.count('020') > 0]
+    # pts = [pt for pt in pts if pt.count('010') > 0 or pt.count('030') > 0 or pt.count('050') > 0]
+    # pts = [pt for pt in pts if pt.count('010') > 0 or pt.count('030') > 0 or pt.count('050') > 0]
     log_file = args.log_dir + "/log_train_%s.txt"%datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     logger = create_logger(log_file, args.local_rank)
     log_args_to_file(args, logger)
     
 
 
-    piple = Evaluator(args,logger)
-    piple._evaluate_loop(pts=pts)
+    piple = Evaluator(args,logger, test_latency=True)
+    # piple._evaluate_loop(pts=pts)
+    piple.test_latency_for_instances(pt=pts[0]) # ! attenion gpu set to 1
             
 
     
