@@ -22,7 +22,7 @@ from loguru import logger
 #         logger.debug(other_info)
 #     return flag
 class InterDataSet(Dataset):
-    def __init__(self, dataset_dir, set_name):
+    def __init__(self, dataset_dir, set_name, test_latency = False):
         self.data_root = os.path.join(dataset_dir, set_name)
         self.ids = os.listdir(self.data_root)
         random.seed(777)
@@ -32,7 +32,10 @@ class InterDataSet(Dataset):
             self.ids = self.ids[:150000]
             # self.ids = self.ids[:100]
         else:
-            self.ids = self.ids[:30000]
+            if test_latency == True:
+                self.ids = self.ids[:100]
+            else:
+                self.ids = self.ids[:30000]
             # self.ids = self.ids[:300]
         
     def __len__(self):
@@ -171,13 +174,13 @@ class InterDataSet(Dataset):
             ret_tensor = ret_tensor.squeeze(dim=-1)
         return ret_tensor
                 
-def get_ddp_dataloader(args, set_name):
+def get_ddp_dataloader(args, set_name, test_latency = False):
     assert set_name in ['train', 'test']
     def worker_init_fn_(worker_id):
         torch_seed = torch.initial_seed()
         np_seed = torch_seed // 2 ** 32 - 1
         np.random.seed(np_seed)
-    dataset = InterDataSet(args.dataset_dir, set_name)
+    dataset = InterDataSet(args.dataset_dir, set_name, test_latency = test_latency)
     if set_name=='train':
         sampler = torch.utils.data.distributed.DistributedSampler(dataset)
         drop_last = True 

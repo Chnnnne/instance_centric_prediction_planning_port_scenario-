@@ -540,12 +540,13 @@ if __name__ == "__main__":
     total_gpus, args.local_rank = init_dist_pytorch(args.local_rank, backend='nccl')
     if args.reproducibility:
         set_seed(seed_value=7777)
-    pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
+    # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-28 17:13:02_back/saved_models"
+    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-12 08:54:33_front_6/saved_models"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
     pts = pts[::-1]
-    # pts = [pt for pt in pts if pt.count('010') > 0 or pt.count('030') > 0 or pt.count('050') > 0]
+    pts = [pt for pt in pts if pt.count('030') > 0]
     # pts = [pt for pt in pts if pt.count('010') > 0 or pt.count('030') > 0 or pt.count('050') > 0]
     log_file = args.log_dir + "/log_train_%s.txt"%datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     logger = create_logger(log_file, args.local_rank)
@@ -553,9 +554,9 @@ if __name__ == "__main__":
     
 
 
-    piple = Evaluator(args,logger, test_latency=True)
-    # piple._evaluate_loop(pts=pts)
-    piple.test_latency_for_instances(pt=pts[0]) # ! attenion gpu set to 1
+    piple = Evaluator(args,logger, test_latency=False)
+    piple._evaluate_loop(pts=pts)
+    # piple.test_latency_for_instances(pt=pts[0]) # !!!!!!!!! attenion gpu set to 1
             
 
     

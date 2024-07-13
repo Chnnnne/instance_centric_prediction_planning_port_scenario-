@@ -503,7 +503,7 @@ def get_minK_brier_FDE(proposed_traj, gt_traj, pred_prob):
     
     return torch.min(weighted_fde,dim=-1).values.sum(-1), brier_score
 
-def get_minK_mr(fde_part, dis=3):
+def get_minK_mr(fde_part, dis=2):
     '''
     求预测轨迹（每个agent有W条）和真值轨迹（每个agent1条）的最小fde是否大于dis（）
     input: fde_part : B
