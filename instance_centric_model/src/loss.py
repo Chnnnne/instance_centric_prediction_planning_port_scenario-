@@ -51,29 +51,29 @@ class Loss(nn.Module):
         score_loss = F.binary_cross_entropy(output_dict['traj_probs'][pred_mask], score_gt, reduction='sum')/pred_num  # S,3M + S,3M   model输出的traj_probs对于mask数据已调整为0，score_gt对mask的数据也也做处理，因此此处可直接算BCE
 
         # 4. planning_loss
-        B, _, _ = input_dict['ego_gt_traj'].shape
-        # 4.1 plannig ref path cls loss
-        ego_gt_probs = input_dict['ego_gt_cand'].float().cuda() # B, M     
-        plan_pred_probs = output_dict['plan_cand_refpath_probs'] # B, M
-        plan_cls_loss = F.binary_cross_entropy(plan_pred_probs, ego_gt_probs, reduction='sum')/B
+        # B, _, _ = input_dict['ego_gt_traj'].shape
+        # # 4.1 plannig ref path cls loss
+        # ego_gt_probs = input_dict['ego_gt_cand'].float().cuda() # B, M     
+        # plan_pred_probs = output_dict['plan_cand_refpath_probs'] # B, M
+        plan_cls_loss = torch.tensor(0).cuda()
 
-        # 4.2 planning traj reg loss
-        plan_traj_with_gt = output_dict['plan_traj_with_gt']# B, 50, 2
-        ego_gt_traj = input_dict['ego_gt_traj'].cuda() # B, 50, 2
-        plan_reg_loss = F.smooth_l1_loss(plan_traj_with_gt, ego_gt_traj, reduction="sum")/B
+        # # 4.2 planning traj reg loss
+        # plan_traj_with_gt = output_dict['plan_traj_with_gt']# B, 50, 2
+        # ego_gt_traj = input_dict['ego_gt_traj'].cuda() # B, 50, 2
+        plan_reg_loss = torch.tensor(0).cuda()
 
-        # 4.3 planning traj prob loss
-        plan_M = output_dict['plan_trajs'].shape[1]
-        plan_pred_trajs = output_dict['plan_trajs'].view(B,plan_M,horizon*dim) # B,3M,50,2 -> B,3M,100
-        plan_all_candidate_mask = output_dict['plan_all_candidate_mask'] # B,3M
-        ego_gt_traj = ego_gt_traj.view(B, horizon*dim)# B,100
-        # plan_score_gt = F.softmax(-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper, dim=-1).detach() # B,3,100 + B,100 -> B,3 -> B,3
-        plan_score_gt = self.masked_softmax(vector=-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper,mask=plan_all_candidate_mask).detach() # B,3M,100 + B,100 -> B,3M   + mask=B,3M -> B,3M
-        plan_score_loss = F.binary_cross_entropy(output_dict['plan_traj_probs'], plan_score_gt, reduction='sum')/B # B,3M + B,3M
+        # # 4.3 planning traj prob loss
+        # plan_M = output_dict['plan_trajs'].shape[1]
+        # plan_pred_trajs = output_dict['plan_trajs'].view(B,plan_M,horizon*dim) # B,3M,50,2 -> B,3M,100
+        # plan_all_candidate_mask = output_dict['plan_all_candidate_mask'] # B,3M
+        # ego_gt_traj = ego_gt_traj.view(B, horizon*dim)# B,100
+        # # plan_score_gt = F.softmax(-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper, dim=-1).detach() # B,3,100 + B,100 -> B,3 -> B,3
+        # plan_score_gt = self.masked_softmax(vector=-self.distance_metric(plan_pred_trajs, ego_gt_traj)/self.temper,mask=plan_all_candidate_mask).detach() # B,3M,100 + B,100 -> B,3M   + mask=B,3M -> B,3M
+        plan_score_loss = torch.tensor(0).cuda()
 
         # irl loss
         scores, weights = output_dict['scores'], output_dict['weights']# scores B,3M    weight B8
-        min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device), plan_all_candidate_mask) # B,3M,50,2  + B,50,2 ->B
+        # min_idx = self.get_closest_traj_idx(output_dict['plan_trajs'], input_dict['ego_gt_traj'].to(output_dict['plan_trajs'].device), plan_all_candidate_mask) # B,3M,50,2  + B,50,2 ->B
         if self.args.train_part == "back" or self.args.train_part == "joint":
             irl_loss = F.cross_entropy(scores, min_idx)
             weights_regularization = torch.square(weights).mean()
@@ -84,7 +84,7 @@ class Loss(nn.Module):
         if self.args.train_part == "back":
             loss = self.lambda4 * irl_loss + self.lambda5 * weights_regularization
         elif self.args.train_part == "front":
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss 
+            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss   
         else:# joint
             loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + self.lambda4 * irl_loss + self.lambda5 * weights_regularization
 

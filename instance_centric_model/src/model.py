@@ -56,13 +56,13 @@ class Model(nn.Module):
             m=self.args.m,
             refpath_dim=self.args.refpath_dim)
         
-        self.plan_decoder = PlanDecoder(
-            input_size=self.args.d_model,
-            hidden_size=self.args.decoder_hidden_size, 
-            n_order=self.args.bezier_order, 
-            m=self.args.m,
-            refpath_dim=self.args.refpath_dim
-        )
+        # self.plan_decoder = PlanDecoder(
+        #     input_size=self.args.d_model,
+        #     hidden_size=self.args.decoder_hidden_size, 
+        #     n_order=self.args.bezier_order, 
+        #     m=self.args.m,
+        #     refpath_dim=self.args.refpath_dim
+        # )
         if self.args.train_part == "back":
             self.scorer = None
         elif self.args.train_part == "front":
@@ -121,16 +121,14 @@ class Model(nn.Module):
         
         ego_refpath_feats = self.refpath_encoder(torch.cat([ego_refpath_cords.reshape(B,ref_M,-1), ego_refpath_vecs.reshape(B,ref_M, -1)],dim=-1)) # B,M,20*2 + 20*2  -> B, M, 64
         # ego traj decoder
-        plan_cand_refpath_probs, plan_params, plan_traj_probs, plan_param_with_gt, plan_all_candidate_mask = self.plan_decoder(agent_feats[:,0,:], ego_refpath_feats, ego_vel_mode, ego_cand_mask, ego_gt_cand)
+        plan_cand_refpath_probs, plan_params, plan_traj_probs, plan_param_with_gt, plan_all_candidate_mask = None, None, None, None, None
 
-        if torch.isnan(plan_params).any():
-            print("param contain nan", param)
+        # if torch.isnan(plan_params).any():
+        #     print("param contain nan", param)
         
-        plan_bcp = plan_params.view(plan_params.shape[0], plan_params.shape[1], -1, 2) # B,3M,(n_order+1)*2 -> B, 3M, (n_order+1), 2
-        plan_trajs = torch.matmul(self.mat_T, plan_bcp) # B,3M,50,2
+        plan_trajs = None # B,3M,50,2
 
-        plan_bcp_with_gt = plan_param_with_gt.view(plan_param_with_gt.shape[0], -1, 2) # B,(n_order+1)*2 -> B,(n_order+1),2 
-        plan_traj_with_gt = torch.matmul(self.mat_T, plan_bcp_with_gt) # B, 50, 2
+        plan_traj_with_gt = None # B, 50, 2
         
         if self.args.train_part == "front":
             scores, weights = None, None
