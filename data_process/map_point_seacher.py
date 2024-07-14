@@ -10,6 +10,10 @@ import common.math_utils as math_utils
 import common.plot_utils as plot_utils
 import common.map_utils as map_utils
 from scipy.interpolate import interp1d
+import copy, time, random
+import matplotlib.pyplot as plt
+from scipy.cluster.hierarchy import dendrogram
+
 
 kSearchJunctionRadius = 2.0
 kJunctionLength = 0.0
@@ -174,7 +178,7 @@ class MapPointSeacher():
         # return candidate_refpaths_cord, candidate_refpaths_vec, map_paths
         return refpaths_cord, [], map_paths
 
-    def get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(self, ori):
+    def get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(self, ori, debug_info = None, draw_info = None):
         '''
             return 
             - refpaths_cord  #  M,5x,2   list[(50,2),(50,2)...]    每个item对应一个mappath, 2是一个ndarray
@@ -205,11 +209,21 @@ class MapPointSeacher():
                 return [],[],[],[],[]
             map_paths = self.filter_mappaths(map_paths)
             refpaths_cord, refpaths_dis= self.sample_mappaths_for_exact_interval(map_paths) # 注意会出现采出来的dis数量没有mappath中unit数量多的情况因为多余50m的都忽略了
-            # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord, refpaths_dis = refpaths_dis)
+            before_cords = copy.deepcopy(refpaths_cord)
+            refpaths_cord, kd_trees, keep_traj_idx, Z = self.cluster_refpath(refpaths_cord, return_Z=True)
+            after_cords = copy.deepcopy(refpaths_cord)
+            if len(before_cords) != len(after_cords) and len(before_cords) - len(after_cords) > 6:
+                if debug_info != None:
+                    plot_utils.draw_candidate_refpaths(ori, refpaths_cord = before_cords, text=f"{debug_info}_{len(before_cords) - len(after_cords)}", draw_info=draw_info)
+                    plot_utils.draw_candidate_refpaths(ori, refpaths_cord = after_cords,  text=f"{debug_info}_{len(before_cords) - len(after_cords)}", draw_info=draw_info)
+                    fig,ax = plt.subplots(figsize=(10,10),dpi=200)
+                    dendrogram(Z, ax=ax)
+                    ax.axhline(y=2.5, c='k', ls='--', lw=0.5)
+                    fig.savefig(f'/data/wangchen/instance_centric/data_process/tmp/candidate_refpath_{debug_info}_dendrogram.jpg')
+                    print("draw a pair")
+                    print("11"*100)
 
-            refpaths_cord, kd_trees, keep_traj_idx = self.cluster_refpath(refpaths_cord)
-            # plot_utils.draw_candidate_refpaths(ori, refpaths_cord = refpaths_cord)
-            
+
 
         
         if len(refpaths_cord) == 0:
@@ -307,7 +321,7 @@ class MapPointSeacher():
         # exit()
         return refpaths_cord, refpaths_dis
 
-    def cluster_refpath(self, in_refpaths_cords):
+    def cluster_refpath(self, in_refpaths_cords, return_Z=False):
         '''
         - in_refpaths_cords: list[(50,2),(50,2)...]
         - out_refpaths_cords: list[(50,2),(50,2)...]  
@@ -316,7 +330,10 @@ class MapPointSeacher():
         '''
         if len(in_refpaths_cords) == 1:
             print("only one refpath, no need of cluster")
-            return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])], [0]
+            if return_Z:
+                return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])], [0], None
+            else:
+                return in_refpaths_cords, [math_utils.get_KDTree(in_refpaths_cords[0])], [0]
 
         def static_clusetr(cluster):
             cluster_dict = {}
@@ -326,8 +343,10 @@ class MapPointSeacher():
                 else:
                     cluster_dict[cluster_idx] = [traj_idx]
             return cluster_dict
-        
-        cluster, kd_trees = math_utils.cluster_trajs(in_refpaths_cords)
+        if return_Z:
+            cluster, kd_trees, Z = math_utils.cluster_trajs(in_refpaths_cords,return_Z)
+        else:
+            cluster, kd_trees = math_utils.cluster_trajs(in_refpaths_cords,return_Z)
         clusetr_dict = static_clusetr(cluster)
         keep_traj_idx = []
         for key,val in clusetr_dict.items():
@@ -342,8 +361,10 @@ class MapPointSeacher():
         print("len(in_refpaths_cords)", len(in_refpaths_cords))
         print("len(out_refpaths_cord)", len(out_refpaths_cord))
         print("len(kd_trees)", len(kd_trees))
-        
-        return out_refpaths_cord, kd_trees, keep_traj_idx
+        if return_Z:
+            return out_refpaths_cord, kd_trees, keep_traj_idx, Z
+        else:
+            return out_refpaths_cord, kd_trees, keep_traj_idx
 
     def get_pathunit_from_point(self, point,output_dir="tmp"):
         import matplotlib.pyplot as plt

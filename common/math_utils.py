@@ -178,7 +178,7 @@ def calculate_distance_matrix(trajectories):
 def get_KDTree(traj_cords):
     return KDTree(traj_cords)
 
-def cluster_trajs(traj_cords):
+def cluster_trajs(traj_cords, return_Z = False):
     '''
         - 过程:
             1. 计算距离矩阵（每两条轨迹之间的距离）
@@ -190,9 +190,12 @@ def cluster_trajs(traj_cords):
 
     # 使用层次聚类
     Z = linkage(squareform(distance_matrix), method='average') # 计算两个簇之间所有成对数据点之间的平均距离作为簇间距离，生成
-    clusters = fcluster(Z, t=0.6, criterion='distance')
+    clusters = fcluster(Z, t=2.5, criterion='distance')
     # clusters:每条轨迹属于哪一个cluster， kd_trees每条轨迹对应的kd_tree   
-    return clusters, kd_trees 
+    if return_Z:
+        return clusters, kd_trees, Z
+    else:
+        return clusters, kd_trees
 
 
 

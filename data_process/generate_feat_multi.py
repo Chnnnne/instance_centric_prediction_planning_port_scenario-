@@ -39,7 +39,7 @@ def parse_log_data(log_data):
         cur_t = cur_frame.timestamp
         # 自车信息
         if ego_id not in data_info:
-            data_info[ego_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[]}
+            data_info[ego_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[],'trailer_angle':[], 'yaw':[]}
         data_info[ego_id]['t'].append(cur_t)
         data_info[ego_id]['x'].append(cur_frame.vehicle_state_debug.xy.x)
         data_info[ego_id]['y'].append(cur_frame.vehicle_state_debug.xy.y)
@@ -48,6 +48,9 @@ def parse_log_data(log_data):
         data_info[ego_id]['length'].append(6.855)
         data_info[ego_id]['width'].append(2.996)
         data_info[ego_id]['type'].append(-1)
+        data_info[ego_id]['trailer_angle'].append(cur_frame.vehicle_state_debug.trailer_angle  if cur_frame.vehicle_state_debug.HasField('trailer_angle') else -1000)
+        data_info[ego_id]['yaw'].append(cur_frame.vehicle_state_debug.yaw)
+
         # 障碍物信息
         for agent in cur_frame.agent_map_debug.agents:
             # planning 内部agent_type编码方式
@@ -58,7 +61,7 @@ def parse_log_data(log_data):
                 continue
             agent_id = agent.agent_id.id
             if agent_id not in data_info:
-                data_info[agent_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[]}
+                data_info[agent_id] = {'t':[],'x':[], 'y':[], 'vel':[], 'vel_yaw':[], 'length':[], 'width':[], 'type':[],'has_trailer':[],  'trailer_x':[], 'trailer_y':[], 'trailer_width':[], 'trailer_length':[], 'trailer_yaw':[], 'yaw':[]}
             if agent.HasField("connect_x"):
                 x = agent.connect_x
                 y = agent.connect_y
@@ -103,6 +106,17 @@ def parse_log_data(log_data):
                 width = agent.width
             if vel < 0.15:
                 vel_yaw = pos_yaw
+            
+            # 当agent有车头且挂车时， head指的是车头  不加前缀的是挂车
+            # 当agent无挂车时，就没有head的概念，不加前缀的就是本身的长宽
+            data_info[agent_id]['has_trailer'].append(True if agent.HasField("head_yaw") else False)
+            data_info[agent_id]['trailer_x'].append(agent.x if agent.HasField("head_x") else -1000)
+            data_info[agent_id]['trailer_y'].append(agent.y if agent.HasField("head_y") else -1000)
+            data_info[agent_id]['trailer_width'].append(agent.width if agent.HasField("head_width") else -1000)
+            data_info[agent_id]['trailer_length'].append(agent.length if agent.HasField("head_length") else -1000)
+            data_info[agent_id]['trailer_yaw'].append(agent.yaw if agent.HasField("head_yaw") else -1000)
+            data_info[agent_id]['yaw'].append(agent.yaw if agent.HasField("yaw") else -1000)
+            
             data_info[agent_id]['t'].append(cur_t)
             data_info[agent_id]['x'].append(x)
             data_info[agent_id]['y'].append(y)
@@ -263,7 +277,7 @@ def generate_future_feats(data_info: dict, target_ids: list):
         candidate_mask = pad_array_list(candidate_mask) # n,Max-N       标记是pad还是candidate  都已经转化为instance-centric
     return tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask
 
-def generate_ego_future_feats(ego_info: dict, cur_index: list):
+def generate_ego_future_feats(ego_info: dict, cur_index: list, debug_info: str = None):
     '''
         - ego_refpath_cords:(20, 2)  ndarray
         - ego_refpath_vecs: (20, 2)  ndarray
@@ -287,7 +301,7 @@ def generate_ego_future_feats(ego_info: dict, cur_index: list):
     ori = [ego_info['x'][cur_index], ego_info['y'][cur_index], 
             ego_info['vel'][cur_index], ego_info['vel_yaw'][cur_index], 
             ego_info['length'][cur_index], ego_info['width'][cur_index]]
-    candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+    candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees,keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori, debug_info=debug_info)
     if len(candidate_refpaths_cords) == 0:
         return None, None, None, None, None, None
     else:
@@ -346,7 +360,7 @@ def generate_ego_future_feats(ego_info: dict, cur_index: list):
 
     
 
-def generate_future_feats_path(data_info: dict, target_ids: list):
+def generate_future_feats_path(data_info: dict, target_ids: list, debug_info = None, draw_info = None):
     '''
         n是target agent的个数， N是每个agent采样的refpath个数， Max-N是所有agent最大的refpath个数
         all_candidate_refpaths_cords:   n , Max-N, 20,2       
@@ -385,7 +399,12 @@ def generate_future_feats_path(data_info: dict, target_ids: list):
                agent_info['vel'][cur_index], agent_info['vel_yaw'][cur_index], 
                agent_info['length'][cur_index], agent_info['width'][cur_index]]
         # candidate_refpaths_cord, candidate_refpaths_vec, map_paths = mp_seacher.get_candidate_refpaths(ori) # △  (N, max_l)
-        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees, keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori)
+        draw_info['obs_info'] = {'x':agent_info['x'][cur_index],'y':agent_info['y'][cur_index],'yaw':agent_info['yaw'][cur_index], 
+                                 'length':agent_info['length'][cur_index],'width':agent_info['width'][cur_index],'vel':agent_info['vel'][cur_index],
+                                 'has_trailer':agent_info['has_trailer'][cur_index],'track_id':target_id,
+                                 'trailer_x':agent_info['trailer_x'][cur_index], 'trailer_y':agent_info['trailer_y'][cur_index], 'trailer_yaw':agent_info['trailer_yaw'][cur_index], 
+                                 'trailer_length':agent_info['trailer_length'][cur_index],'trailer_width':agent_info['trailer_width'][cur_index]}
+        candidate_refpaths_cords, map_paths, candidate_refpaths_dis, kd_trees, keep_traj_idx = mp_seacher.get_candidate_refpath_and_sample_for_exact_dist_and_cluster_and_get_mappaths(ori, debug_info=debug_info, draw_info=draw_info)
         valid_flag = False
         if len(candidate_refpaths_cords) == 0:
             gt_cand = np.zeros(1) #(1,)
@@ -772,7 +791,7 @@ def load_seq_save_features(index):
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    for i in range(19, frame_num-160, 20): # 10f间隔遍历ego的所有f obs:2s fut:5s
+    for i in range(19, frame_num-160, 15): # 10f间隔遍历ego的所有f obs:2s fut:5s
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
         if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
@@ -785,10 +804,12 @@ def load_seq_save_features(index):
 
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
-        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids)
+        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids, debug_info=f"{index}_pick_path_{pickle_path.split('/')[-1]}_idx_{i}", 
+                    draw_info={"ego_info":{'x':ego_info['x'][i],'y':ego_info['y'][i],'yaw':ego_info['yaw'][i],'vel':ego_info['vel'][i],'has_trailer':True if ego_info['trailer_angle'][i] != -1000 else False,'trailer_angle':ego_info['trailer_angle'][i]}})
 
         ego_refpath_cords, ego_refpath_vecs, ego_gt_cand, ego_vel_mode, ego_gt_traj, ego_cand_mask = generate_ego_future_feats(ego_info, i)
-
+        ego_feats_for_vis = [ego_info['x'][i], ego_info['y'][i],ego_info['yaw'][i],ego_info['vel'][i],True if ego_info['trailer_angle'][i] != -1000 else False,ego_info['trailer_angle'][i]]
+        ego_feats_for_vis = np.asarray(ego_feats_for_vis)
 
         if candidate_refpaths_cords is None or ego_refpath_cords is None:
             continue
@@ -800,13 +821,22 @@ def load_seq_save_features(index):
 
                     
         agent_ctrs, agent_vecs = [], [] # 存储所有agent的obs点信息 (all_n,2) (all_n,2)
+        agent_feats_for_vis = [] # (all_n,13)
         for agent_id, index in agent_ids:
             agent_ctrs.append([data_info[agent_id]['x'][index], data_info[agent_id]['y'][index]])
             theta = data_info[agent_id]['vel_yaw'][index]
             agent_vecs.append([np.cos(theta), np.sin(theta)])
+            if agent_id == -1:
+                agent_feats_for_vis.append(np.zeros(13))
+            else:
+                agent_feats_for_vis.append([data_info[agent_id]['x'][index], data_info[agent_id]['y'][index],data_info[agent_id]['yaw'][index],
+                                        data_info[agent_id]['length'][index],data_info[agent_id]['width'][index],data_info[agent_id]['vel'][index],
+                                        data_info[agent_id]['has_trailer'][index],agent_id,data_info[agent_id]['trailer_x'][index],
+                                        data_info[agent_id]['trailer_y'][index],data_info[agent_id]['trailer_yaw'][index],data_info[agent_id]['trailer_length'][index],
+                                        data_info[agent_id]['trailer_width'][index]]) # 13
         agent_ctrs = np.asarray(agent_ctrs)
         agent_vecs = np.asarray(agent_vecs)
-
+        agent_feats_for_vis = np.asarray(agent_feats_for_vis) # [all_n,13]
         # 计算plan特征
         plan_feat, plan_mask = generate_plan_feats(data_info, target_ids, i) 
 
@@ -839,6 +869,10 @@ def load_seq_save_features(index):
         # mask pos to zero
         feat_data['agent_feats'][~feat_data['agent_mask'].astype(bool)] = 0
 
+
+        feat_data['agent_feats_for_vis'] = agent_feats_for_vis # (all_n, 13) x,y,yaw,length,width,vel, has_trailer, track_id, trailer_x, trailer_y, trailer_yaw, trailer_length, trailer_width
+        feat_data['ego_feats_for_vis'] = ego_feats_for_vis# (6) x,y,yaw,vel,has_trailer, tralier_angle
+        print(agent_feats_for_vis.shape);print(ego_feats_for_vis.shape);exit()
         
 
         feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (M,20,2)
@@ -903,27 +937,27 @@ if __name__=="__main__":
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
     
-    input_path = '/private2/wanggang/pre_log_inter_data'
-    # input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
+    # input_path = '/private2/wanggang/pre_log_inter_data'
+    input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
-    all_file_list = all_file_list[:int(len(all_file_list)/6)]
+    all_file_list = all_file_list[:int(len(all_file_list))]
     train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
-    cur_files = train_files
+    cur_files = all_file_list
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     
     # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data/train'
+    cur_output_path = '/private/wangchen/instance_model/instance_model_data_test_data_generate_latency/pkl/'
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    pool = multiprocessing.Pool(processes=16)
-    pool.map(load_seq_save_features, range(len(cur_files)))
+    # pool = multiprocessing.Pool(processes=16)
+    # pool.map(load_seq_save_features, range(len(cur_files)))
 
-    # for i in range(10,100): # 19 error 21 draw
-    #     print("--"*20, i)
-    # #     # my_candidate_refpath_search_test(i)
-    #     load_seq_save_features(i)
+    for i in range(len(cur_files) -5 ,0,-1): # 19 error 21 draw
+        print("--"*20, i)
+    #     # my_candidate_refpath_search_test(i)
+        load_seq_save_features(i)
 
     # print("###########完成###############")
     # pool.close()

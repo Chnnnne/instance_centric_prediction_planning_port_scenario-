@@ -27,8 +27,17 @@ def draw_all_lanes(axes, lanes, color='r'):
         assert False, "lanes input param is {} which is not dict or list".format(
             type(lanes))
     for lane_id, lane in lanes_map.items():
-        ref_line = lane.reference_line()
         xs, ys = list(), list()
+        # if lane.IsInJunction():
+        #     continue
+            # if lane.junction().is_virtual_junction():
+            #     continue
+            # else:
+            #     jun_points = lane.junction().polygon().points()
+            #     for point in jun_points:
+            #         xs.append(point.x())
+            #         ys.append(point.y())
+        ref_line = lane.reference_line()
         for s in np.arange(0.0, ref_line.length(), DELTA_S):
             ref_point = ref_line.GetReferencePoint(s)
             xs.append(ref_point.x())
@@ -78,7 +87,7 @@ def draw_points(points, draw_map = True):
 
 
 
-def get_xy_lim(ori = None, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 15):
+def get_xy_lim(ori = None, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 60):
     if ori != None:
         if candidate_points != None:
             candidate_points = np.asarray(candidate_points)
@@ -260,7 +269,7 @@ def draw_candidate_refpaths_with_his_fut(ori, candidate_refpaths, cand_gt_idx = 
     print(f"draw candiadate_refpath at {fig_save_path.resolve()}")
     plt.close()
 
-def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = None, my_ax = None, refpaths_dis = None):
+def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = None, my_ax = None, refpaths_dis = None, text=None, draw_info=None):
     '''
         candidate_refpaths: list[refpath]
         refpath: [(x1,y2),(x2,y2)]
@@ -273,7 +282,7 @@ def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = 
     ax.axis("equal")
     roi_matrix = get_xy_lim(ori, candidate_refpaths=refpaths_cord)
     ax.axis(roi_matrix)
-    ax.set_title(f"total {len(refpaths_cord)} candidate_refpaths")
+    ax.set_title(f"total {len(refpaths_cord)} candidate_refpaths. {text}")
 
 
     # 地图
@@ -281,10 +290,14 @@ def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = 
     # 车点
     ax.scatter([ori[0]], [ori[1]], c='y', marker='o', alpha=0.8)
     # 车头
-    corner_xs, corner_ys = calculate_box_corners(ori)
-    ax.plot(corner_xs, corner_ys, color='b', linewidth=2.0)
+    if draw_info != None:
+        draw_ego_box(ax, ego_info=draw_info['ego_info'])
+        draw_obs_box(ax, obs_info=draw_info['obs_info'])
+    else:
+        corner_xs, corner_ys = calculate_box_corners(ori)
+        ax.plot(corner_xs, corner_ys, color='b', linewidth=2.0)
 
-    colors = plt.cm.viridis(np.linspace(0, 1, len(refpaths_cord)))
+    colors = plt.cm.viridis(np.linspace(0, 0.8, len(refpaths_cord)))
 
     for idx, (refpath_cord,color) in enumerate(zip(refpaths_cord, colors)):
         # draw_one_refpath_one_pic(idx, refpath, color,roi_matrix)
@@ -303,14 +316,13 @@ def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = 
                 ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=1)
 
             ax.text(refpath_cord[-1][0],refpath_cord[-1][1], f"{idx}'e", color=color)
-    if refpaths_dis != None:
-        plt.legend(loc='upper right', fontsize='small')
+    plt.legend(loc='upper right')
     if my_ax == None: 
         output_dir = Path(output_dir)
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
             print(f"mkdir {output_dir}")
-        fig_save_path = output_dir / f'candidate_refpath{time_utils.get_cur_time_string()}.jpg'
+        fig_save_path = output_dir / f'candidate_refpath_{text}_{time_utils.get_cur_time_string()}.jpg'
         fig.savefig(fig_save_path)
         print(f"draw candiadate_refpath at {fig_save_path.resolve()}")
 
@@ -422,3 +434,116 @@ def draw_mappaths(ori, mappaths, output_dir = "tmp"):
                 
     pass # TODO:wangchen 可视化一下mappath，寻找路口前很近的距离没法生成轨迹的原因
 
+
+
+def draw_ego_box(ax,ego_info):
+    vs = Vehicle_State()
+    vs.x = ego_info['x']
+    vs.y = ego_info['y']
+    vs.yaw = ego_info['yaw']
+    vs.vel = ego_info['vel']
+    vs.has_trailer = ego_info['has_trailer']
+    vs.trailer_angle = ego_info['trailer_angle']
+    ego_current_pose_info = get_ego_current_pose_and_box(vs)
+    ax.plot(ego_current_pose_info['head_box_corners']['xs'],
+                 ego_current_pose_info['head_box_corners']['ys'], color='red', label=f"ego's vel:{round(vs.vel,2)}")
+    ax.plot(ego_current_pose_info['trailer_box_corners']['xs'],
+                 ego_current_pose_info['trailer_box_corners']['ys'], color='red')
+    
+
+def draw_obs_box(ax,obs_info):
+    head_corners = generate_corners(x=obs_info['x'],y=obs_info['y'],yaw=obs_info['yaw'],length=obs_info['length'],width=obs_info['width'])
+    ax.plot(head_corners['xs'], head_corners['ys'], '-b',label=f"{obs_info['track_id']}_vel:{round(obs_info['vel'], 2)}")
+
+    if obs_info['has_trailer']:
+        trailer_corners = generate_corners(x=obs_info['trailer_x'],y=obs_info['trailer_y'],yaw=obs_info['trailer_yaw'],length=obs_info['trailer_length'],width=obs_info['trailer_width'])
+        ax.plot(trailer_corners['xs'], trailer_corners['ys'], '-b')
+
+def get_ego_current_pose_and_box(vehicle_state):
+    # 如果自车没有挂车，该函数逻辑是否有问题？
+    shape = vehicle_state.shape
+    base_offset = vehicle_state.shape.front_length - shape.length / 2.0
+    ego_head_center_x = vehicle_state.x + \
+        base_offset * math.cos(vehicle_state.yaw)
+    ego_head_center_y = vehicle_state.y + \
+        base_offset * math.sin(vehicle_state.yaw)
+    head_center = (ego_head_center_x, ego_head_center_y, vehicle_state.yaw)
+    head_box_corners = generate_corners(
+        ego_head_center_x, ego_head_center_y, vehicle_state.yaw, shape.length, shape.width)
+
+    if True:
+        # if vehicle_state.has_trailer:
+
+        couple_x = vehicle_state.x + shape.ego_to_coupling_point * \
+            math.cos(vehicle_state.yaw)
+        couple_y = vehicle_state.y + shape.ego_to_coupling_point * \
+            math.sin(vehicle_state.yaw)
+        trailer_yaw = vehicle_state.yaw + vehicle_state.trailer_angle
+        trailer_couple_to_center = shape.trailer_back_length - shape.trailer_length / 2.0
+        trailer_x = couple_x - trailer_couple_to_center * math.cos(trailer_yaw)
+        trailer_y = couple_y - trailer_couple_to_center * math.sin(trailer_yaw)
+        trailer_center = (trailer_x, trailer_y, trailer_yaw)
+
+        trailer_box_corners = generate_corners(
+            trailer_x, trailer_y, trailer_yaw, shape.trailer_length, shape.trailer_width)
+
+        return {"head_center": head_center,
+                "head_width": shape.width,
+                "head_length": shape.length,
+                "head_box_corners": head_box_corners,
+                "trailer_center": trailer_center,
+                "trailer_width": shape.trailer_width,
+                "trailer_length": shape.trailer_length,
+                "trailer_box_corners": trailer_box_corners}
+    else:
+        return {"head_center": head_center,
+                "head_width": shape.width,
+                "head_length": shape.length,
+                "head_box_corners": head_box_corners}
+
+
+def generate_corners(x, y, yaw, length, width):
+    half_length = length / 2.0
+    half_width = width / 2.0
+    cos_heading = math.cos(yaw)
+    sin_heading = math.sin(yaw)
+    dx1 = cos_heading * half_length
+    dy1 = sin_heading * half_length
+    dx2 = sin_heading * half_width
+    dy2 = -cos_heading * half_width
+    xs = [x + dx1 + dx2, x + dx1 - dx2, x - dx1 - dx2, x - dx1 + dx2]
+    xs.append(xs[0])
+    ys = [y + dy1 + dy2, y + dy1 - dy2, y - dy1 - dy2, y - dy1 + dy2]
+    ys.append(ys[0])
+    return {"xs": xs, "ys": ys}
+
+
+class Vehicle_State:
+    def __init__(self):
+        self.shape = Shape()
+
+        self.timestamp = -1
+        self.x = -1
+        self.y = -1
+        self.yaw = -1
+        self.vel = -1
+        self.vehilce_name = "default"
+        
+        self.has_trailer =  False
+        self.trailer_angle = -1
+
+class Shape():
+    def __init__(self):
+        self.length = 6.855
+        self.width = 2.996
+        self.height = 3.12
+        self.front_length = 5.395
+        self.back_length = 1.4600000000000009
+        self.has_trailer_info = True
+        self.ego_to_coupling_point = 0.032999999999999474
+        self.trailer_length =  12.715
+        self.trailer_width = 2.78
+        self.trailer_width_with_tyre = 2.45
+        self.trailer_front_length = 0.7645
+        self.trailer_back_length = 11.950
+        self.trailer_back_track_length = 8.85
