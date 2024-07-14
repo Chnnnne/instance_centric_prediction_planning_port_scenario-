@@ -31,10 +31,10 @@ class Loss(nn.Module):
         gt_probs = input_dict['gt_candts'].float().cuda() # B, N, M     
 
         gt_probs = gt_probs[pred_mask] # S, M   s个agent, 每个agent M个refpath     
-        pred_probs = output_dict['cand_refpath_probs'][pred_mask] # B, N, M -> S, M （s个agent，m个预测点） 被mask住的数据，model预测已调整为0，
-        pred_num = pred_probs.shape[0] # S
-        cls_loss = F.binary_cross_entropy(pred_probs, gt_probs, reduction='sum')/pred_num  # 对于被mask的数据项，根据BSE定义，得单项loss为0，因此此处的loss无需再做mask
-        
+        # pred_probs = output_dict['cand_refpath_probs'][pred_mask] # B, N, M -> S, M （s个agent，m个预测点） 被mask住的数据，model预测已调整为0，
+        pred_num = gt_probs.shape[0] # S
+        # cls_loss = F.binary_cross_entropy(pred_probs, gt_probs, reduction='sum')/pred_num  # 对于被mask的数据项，根据BSE定义，得单项loss为0，因此此处的loss无需再做mask
+        cls_loss = torch.tensor(0).cuda()
 
         # 2、motion reg loss
         traj_with_gt = output_dict['traj_with_gt'].squeeze(2)[pred_mask] #B,N,1,50,2 -> B,N,50,2-> S, 50, 2
@@ -84,7 +84,8 @@ class Loss(nn.Module):
         if self.args.train_part == "back":
             loss = self.lambda4 * irl_loss + self.lambda5 * weights_regularization
         elif self.args.train_part == "front":
-            loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss 
+            # loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss 
+            loss = self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss 
         else:# joint
             loss = self.lambda1 * cls_loss + self.lambda2 * reg_loss + self.lambda3 * score_loss  + self.lambda1*plan_cls_loss + self.lambda2 * plan_reg_loss + self.lambda3 * plan_score_loss + self.lambda4 * irl_loss + self.lambda5 * weights_regularization
 

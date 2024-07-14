@@ -8,10 +8,10 @@ class TrajDecoder(nn.Module):
         super().__init__()
         self.m = m
 
-        self.cand_refpath_prob_layer = nn.Sequential(
-            ResMLP(input_size + refpath_dim, hidden_size, hidden_size),# 128+64
-            nn.Linear(hidden_size, 1)
-        )
+        # self.cand_refpath_prob_layer = nn.Sequential(
+        #     ResMLP(input_size + refpath_dim, hidden_size, hidden_size),# 128+64
+        #     nn.Linear(hidden_size, 1)
+        # )
 
 
         self.motion_estimator_layer = nn.Sequential(
@@ -61,8 +61,9 @@ class TrajDecoder(nn.Module):
         agent_feats_repeat = feats.unsqueeze(2).repeat(1, 1, M, 1) # B, N, M, D
         feats_cand = torch.cat([agent_feats_repeat, refpath_feats], dim=-1) # B,N,M, D+64
         # 1. refpath打分
-        prob_tensor = self.cand_refpath_prob_layer(feats_cand).squeeze(-1) # B,N,M, D+64 -> B,N,M 
-        cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
+        # prob_tensor = self.cand_refpath_prob_layer(feats_cand).squeeze(-1) # B,N,M, D+64 -> B,N,M 
+        # cand_refpath_probs = self.masked_softmax(prob_tensor, candidate_mask, dim=-1) # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
+        cand_refpath_probs = None # B,N,M + B,N,M -> B,N,M 空数据被mask为概率0
 
         # [B,N,M, D + 64+ embed]   *  3
 
