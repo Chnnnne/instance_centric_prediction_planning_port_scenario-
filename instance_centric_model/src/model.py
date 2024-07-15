@@ -205,7 +205,7 @@ class Model(nn.Module):
         #######################################################################################
         T, D = 50, 2
         M = output_dict['param'].shape[2]
-        plan_M = output_dict['plan_params'].shape[1]
+        # plan_M = output_dict['plan_params'].shape[1]
         batch_size, N = pred_mask.shape
         order = self.args.bezier_order + 1
         t_values = torch.linspace(0,1,50).cuda()
@@ -267,7 +267,7 @@ class Model(nn.Module):
         #######################################################################################
         # 规划指标
         #######################################################################################
-
+        '''
         ego_gt_traj = input_dict['ego_gt_traj'].unsqueeze(1).cuda() # B,1,50,2
         plan_trajs = output_dict['plan_trajs'] # B,3M,50,2
         plan_param = output_dict['plan_params'].reshape(batch_size, plan_M, self.args.bezier_order+1, 2) # B,3M,(n+1),2
@@ -347,26 +347,8 @@ class Model(nn.Module):
 
 
 
-        '''
-        else:
-            # 计算 mean ade fde ...
-            # mean ade
-            plan_ade = torch.sum(torch.mean(torch.mean(torch.linalg.norm(plan_trajs - ego_gt_traj[:,None,:,:],dim=-1),dim=-1))) # B,3,50,2 -> B,3,50 -> B,3 -> B ->1
-            # mean fde
-            plan_fde = torch.linalg.norm(plan_trajs[:,:,-1,:] - ego_gt_traj[:,None,-1,:], dim=-1)# B,3,2 - B,1,2 -> B,3
-            plan_fde_sum = plan_fde.mean(-1).sum() # B,3->B->1
-            # mr
-            plan_missing_num = batch_size - (plan_fde < 3).any(dim=-1).sum() # B,3 -> B -> 1
-            # jerk
-            plan_vec_param = bezier_derivative(plan_param) # B,3,n_order,2
-            plan_acc_param = bezier_derivative(plan_vec_param) # B,3, n_order-1, 2
-            plan_jerk_param = bezier_derivative(plan_acc_param) # B,3, n_order-2, 2
-            plan_jerk_vector = bezier_curve(plan_jerk_param,t_values)/(5**3) # B,3,20,2
-            plan_jerk_scaler = torch.linalg.norm(plan_jerk_vector,dim=-1) # B,3,20
-            plan_RMS_jerk = torch.sqrt(torch.mean(plan_jerk_scaler**2, dim=-1)) # B,3
-            plan_RMS_jerk = torch.sum(torch.mean(RMS_jerk,dim=-1))# B,3->B->1
-        '''
 
+        '''
         metric_dict ={"valid_batch_size":(valid_batch_size, 0), "batch_size":(batch_size, 0), 
                       "target_top":(target_top, 1), 
                       "mink_ade":(mink_ade,1), "min1_ade":(min1_ade,1), 
@@ -380,15 +362,15 @@ class Model(nn.Module):
                       "mink_lateral_acceleration":(mink_lateral_acceleration, 1), "min1_lateral_acceleration":(min1_lateral_acceleration, 1),
 
                       
-                      "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
-                      "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), "plan_mink_brier_fde":(plan_mink_brier_fde,2), "plan_brier_score":(plan_brier_score, 2),
-                      "plan_mink_mr":(plan_mink_mr, 2),"plan_min1_mr":(plan_min1_mr,2),
-                      "plan_mink_ahe":(plan_mink_ahe, 2),"plan_min1_ahe":(plan_min1_ahe,2),
-                      "plan_mink_fhe":(plan_mink_fhe, 2),"plan_min1_fhe":(plan_min1_fhe,2),
-                      "plan_mink_RMS_jerk":(plan_mink_RMS_jerk,2),"plan_min1_RMS_jerk":(plan_min1_RMS_jerk,2), 
-                      "plan_mink_curvature":(plan_mink_curvature, 2),"plan_min1_curvature":(plan_min1_curvature,2),
-                      "plan_mink_lateral_acceleration":(plan_mink_lateral_acceleration,2),"plan_min1_lateral_acceleration":(plan_min1_lateral_acceleration,2),
-                      "risk_num":(risk_num,2),"agent_dist":(agent_dist,2)
+                    #   "plan_mink_ade":(plan_mink_ade,2), "plan_min1_ade":(plan_min1_ade,2), 
+                    #   "plan_mink_fde":(plan_mink_fde,2), "plan_min1_fde":(plan_min1_fde,2), "plan_mink_brier_fde":(plan_mink_brier_fde,2), "plan_brier_score":(plan_brier_score, 2),
+                    #   "plan_mink_mr":(plan_mink_mr, 2),"plan_min1_mr":(plan_min1_mr,2),
+                    #   "plan_mink_ahe":(plan_mink_ahe, 2),"plan_min1_ahe":(plan_min1_ahe,2),
+                    #   "plan_mink_fhe":(plan_mink_fhe, 2),"plan_min1_fhe":(plan_min1_fhe,2),
+                    #   "plan_mink_RMS_jerk":(plan_mink_RMS_jerk,2),"plan_min1_RMS_jerk":(plan_min1_RMS_jerk,2), 
+                    #   "plan_mink_curvature":(plan_mink_curvature, 2),"plan_min1_curvature":(plan_min1_curvature,2),
+                    #   "plan_mink_lateral_acceleration":(plan_mink_lateral_acceleration,2),"plan_min1_lateral_acceleration":(plan_min1_lateral_acceleration,2),
+                    #   "risk_num":(risk_num,2),"agent_dist":(agent_dist,2)
                       }
         return metric_dict
     
