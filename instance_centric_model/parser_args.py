@@ -48,7 +48,7 @@ def get_parser():
         '--num_epochs', '-ne', default=50, type=int, help='number of epochs to train for')
     
     parser.add_argument(
-        '--base_dir', '-bd', default="/private/wangchen/instance_model/", type=str, help='the base dir to store log/MODEL/tb')
+        '--base_dir', '-bd', default="/private/wangchen/instance_model/my/", type=str, help='the base dir to store log/MODEL/tb')
     
     parser.add_argument('--train_part', '-tp', default="front", type=str, help="front/back/joint")
     
