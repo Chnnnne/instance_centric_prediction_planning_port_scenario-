@@ -219,13 +219,13 @@ class Model(nn.Module):
             gt_prob = gt_prob.squeeze(dim=-1)
         valid_batch_size, label_num = gt_prob.size() # S, M
         gt_label = torch.argmax(gt_prob, -1) # S,获取one-hot的idx
-        target_prob = output_dict['cand_refpath_probs'][pred_mask] # B,N,M -> S,M
+        # target_prob = output_dict['cand_refpath_probs'][pred_mask] # B,N,M -> S,M
         
-        max_probs, max_indices = torch.max(target_prob, dim=1) # S
-        # 计算target的准确率
-        for i in range(valid_batch_size):
-            if gt_label[i] ==max_indices[i]:
-                target_top += 1
+        # max_probs, max_indices = torch.max(target_prob, dim=1) # S
+        # # 计算target的准确率
+        # for i in range(valid_batch_size):
+        #     if gt_label[i] ==max_indices[i]:
+        #         target_top += 1
 
 
         param = output_dict['param'][pred_mask].reshape(valid_batch_size, M,order, 2) # B,N,3M,(n+1)*2,    S,3M,(n+1)*2 =>  S,3M,(n+1), 2 
