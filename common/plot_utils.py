@@ -28,20 +28,20 @@ def draw_all_lanes(axes, lanes, color='r'):
             type(lanes))
     for lane_id, lane in lanes_map.items():
         xs, ys = list(), list()
-        # if lane.IsInJunction():
-        #     continue
-            # if lane.junction().is_virtual_junction():
-            #     continue
-            # else:
-            #     jun_points = lane.junction().polygon().points()
-            #     for point in jun_points:
-            #         xs.append(point.x())
-            #         ys.append(point.y())
-        ref_line = lane.reference_line()
-        for s in np.arange(0.0, ref_line.length(), DELTA_S):
-            ref_point = ref_line.GetReferencePoint(s)
-            xs.append(ref_point.x())
-            ys.append(ref_point.y())
+        if lane.IsInJunction():
+            if lane.junction().is_virtual_junction():
+                continue
+            else:
+                jun_points = lane.junction().polygon().points()
+                for point in jun_points:
+                    xs.append(point.x())
+                    ys.append(point.y())
+        else:
+            ref_line = lane.reference_line()
+            for s in np.arange(0.0, ref_line.length(), DELTA_S):
+                ref_point = ref_line.GetReferencePoint(s)
+                xs.append(ref_point.x())
+                ys.append(ref_point.y())
         axes.plot(xs, ys, color=color, ls=':')
 
 
@@ -87,7 +87,7 @@ def draw_points(points, draw_map = True):
 
 
 
-def get_xy_lim(ori = None, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 60):
+def get_xy_lim(ori = None, candidate_points = None, candidate_refpaths = None, points_xy = None, extend = 20):
     if ori != None:
         if candidate_points != None:
             candidate_points = np.asarray(candidate_points)
@@ -275,14 +275,14 @@ def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = 
         refpath: [(x1,y2),(x2,y2)]
     '''
     if my_ax == None: 
-        fig, ax = plt.subplots(figsize=(22,12),dpi=800)
+        fig, ax = plt.subplots(figsize=(12,8),dpi=400)
     else:
         ax = my_ax
 
     ax.axis("equal")
     roi_matrix = get_xy_lim(ori, candidate_refpaths=refpaths_cord)
     ax.axis(roi_matrix)
-    ax.set_title(f"total {len(refpaths_cord)} candidate_refpaths. {text}")
+    ax.set_title(f"total {len(refpaths_cord)} candidate_refpaths.")
 
 
     # 地图
@@ -309,11 +309,11 @@ def draw_candidate_refpaths(ori, refpaths_cord, output_dir="tmp", cand_gt_idx = 
                 ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], marker="*",color='purple', alpha=0.5, linewidth=3)
             ax.text(refpath_cord[-1][0],refpath_cord[-1][1], f"{idx}'e", color=color)
         else:
-            ax.text(refpath_cord[0][0],refpath_cord[0][1], f"{idx}'s", color=color)
+            # ax.text(refpath_cord[0][0],refpath_cord[0][1], f"{idx}'s", color=color)
             if refpaths_dis != None:
                 ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=1, label = f"{idx}:{refpaths_dis[idx]}")
             else:
-                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=1)
+                ax.plot([xy[0] for xy in refpath_cord], [xy[1] for xy in refpath_cord], color=color, alpha=0.5, linewidth=2)
 
             ax.text(refpath_cord[-1][0],refpath_cord[-1][1], f"{idx}'e", color=color)
     plt.legend(loc='upper right')
@@ -449,15 +449,24 @@ def draw_ego_box(ax,ego_info):
                  ego_current_pose_info['head_box_corners']['ys'], color='red', label=f"ego's vel:{round(vs.vel,2)}")
     ax.plot(ego_current_pose_info['trailer_box_corners']['xs'],
                  ego_current_pose_info['trailer_box_corners']['ys'], color='red')
+    ax.quiver(vs.x, vs.y, math.cos(vs.yaw)*20, math.sin(vs.yaw)*20, angles='xy', scale_units='xy', width = 0.0030,scale=4, color='r')
+    ax.text(vs.x+2, vs.y+3,f"{round(vs.vel,1)}m/s", color='r')
+    print("draw quiver")
     
 
 def draw_obs_box(ax,obs_info):
+    # draw head
     head_corners = generate_corners(x=obs_info['x'],y=obs_info['y'],yaw=obs_info['yaw'],length=obs_info['length'],width=obs_info['width'])
     ax.plot(head_corners['xs'], head_corners['ys'], '-b',label=f"{obs_info['track_id']}_vel:{round(obs_info['vel'], 2)}")
 
-    if obs_info['has_trailer']:
+    if obs_info['has_trailer']: # draw trailer
         trailer_corners = generate_corners(x=obs_info['trailer_x'],y=obs_info['trailer_y'],yaw=obs_info['trailer_yaw'],length=obs_info['trailer_length'],width=obs_info['trailer_width'])
         ax.plot(trailer_corners['xs'], trailer_corners['ys'], '-b')
+    
+    # draw quiver
+    ax.quiver(obs_info['x'],obs_info['y'], math.cos(obs_info['yaw'])*20, math.sin(obs_info['yaw'])*20, angles='xy', scale_units='xy', width = 0.0030,scale=4, color='b')
+    ax.text(obs_info['x']+2,obs_info['y']+3,f"{round(obs_info['vel'],1)}m/s", color='b')
+
 
 def get_ego_current_pose_and_box(vehicle_state):
     # 如果自车没有挂车，该函数逻辑是否有问题？

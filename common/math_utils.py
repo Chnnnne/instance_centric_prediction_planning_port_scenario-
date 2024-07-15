@@ -190,7 +190,7 @@ def cluster_trajs(traj_cords, return_Z = False):
 
     # 使用层次聚类
     Z = linkage(squareform(distance_matrix), method='average') # 计算两个簇之间所有成对数据点之间的平均距离作为簇间距离，生成
-    clusters = fcluster(Z, t=2.5, criterion='distance')
+    clusters = fcluster(Z, t=4.5, criterion='distance')
     # clusters:每条轨迹属于哪一个cluster， kd_trees每条轨迹对应的kd_tree   
     if return_Z:
         return clusters, kd_trees, Z

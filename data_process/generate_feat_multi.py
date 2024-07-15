@@ -791,7 +791,7 @@ def load_seq_save_features(index):
     ego_info = data_info[-1]
     frame_num = len(ego_info['t'])
     vehicle_name = pickle_path.split('/')[-1].split('_')[0]
-    for i in range(19, frame_num-160, 15): # 10f间隔遍历ego的所有f obs:2s fut:5s
+    for i in range(19, frame_num-160, 5): # 10f间隔遍历ego的所有f obs:2s fut:5s
         cur_t = ego_info['t'][i]
         # 过滤位于非有效地图上的数据
         if judge_undefined_scene(ego_info['x'][i], ego_info['y'][i]):
@@ -804,7 +804,7 @@ def load_seq_save_features(index):
 
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
-        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids, debug_info=f"{index}_pick_path_{pickle_path.split('/')[-1]}_idx_{i}", 
+        candidate_refpaths_cords, candidate_refpaths_vecs, gt_preds, gt_vel_mode, gt_candts, candidate_mask = generate_future_feats_path(data_info, target_ids, debug_info=f"index_{index}_pick_path_{pickle_path.split('/')[-1]}_idx_{i}", 
                     draw_info={"ego_info":{'x':ego_info['x'][i],'y':ego_info['y'][i],'yaw':ego_info['yaw'][i],'vel':ego_info['vel'][i],'has_trailer':True if ego_info['trailer_angle'][i] != -1000 else False,'trailer_angle':ego_info['trailer_angle'][i]}})
 
         ego_refpath_cords, ego_refpath_vecs, ego_gt_cand, ego_vel_mode, ego_gt_traj, ego_cand_mask = generate_ego_future_feats(ego_info, i)
@@ -872,7 +872,7 @@ def load_seq_save_features(index):
 
         feat_data['agent_feats_for_vis'] = agent_feats_for_vis # (all_n, 13) x,y,yaw,length,width,vel, has_trailer, track_id, trailer_x, trailer_y, trailer_yaw, trailer_length, trailer_width
         feat_data['ego_feats_for_vis'] = ego_feats_for_vis# (6) x,y,yaw,vel,has_trailer, tralier_angle
-        print(agent_feats_for_vis.shape);print(ego_feats_for_vis.shape);exit()
+        print(agent_feats_for_vis.shape);print(ego_feats_for_vis.shape)
         
 
         feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (M,20,2)
@@ -954,7 +954,7 @@ if __name__=="__main__":
     # pool = multiprocessing.Pool(processes=16)
     # pool.map(load_seq_save_features, range(len(cur_files)))
 
-    for i in range(len(cur_files) -5 ,0,-1): # 19 error 21 draw
+    for i in range(len(cur_files) -25 ,0,-1): # 19 error 21 draw
         print("--"*20, i)
     #     # my_candidate_refpath_search_test(i)
         load_seq_save_features(i)
