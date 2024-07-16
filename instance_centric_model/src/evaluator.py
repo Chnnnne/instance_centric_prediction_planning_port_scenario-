@@ -6,7 +6,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 import time
-import os
+import os,json
 import datetime
 import tqdm
 from parser_args import  main_parser_for_evel, log_args_to_file
@@ -533,7 +533,62 @@ class Evaluator(object):
                 # print(times[10:].mean(-1).item())
 
 
- 
+
+    def get_coef_distribute_polynomial(self, pt, mode='test'):
+        self._load_or_restart("eval", pt)
+        self.net.eval()  # evaluation mode
+        torch.manual_seed(42)
+
+        total_iter_each_epoch = len(self.data_loaders[mode])
+        dataloader_iter = iter(self.data_loaders[mode])
+        coef_x = {"a3":[],"a2":[],"a1":[],"a0":[]}
+        coef_y = {"b3":[],"b2":[],"b1":[],"b0":[]}
+        with torch.no_grad():
+            with tqdm.trange(0, total_iter_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
+                for cur_it in pbar:# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
+                    input_dict = next(dataloader_iter)
+                    output_dict = self.net(input_dict)
+                    param = output_dict['param'] # B,N,3M,8
+                    all_candidate_mask = output_dict['all_candidate_mask'] # B,N,3M
+                    valid_param = param[all_candidate_mask] # S,8
+                    # valid_num = valid_param.shape[0]
+                    # valid_param = valid_param.reshape(valid_num,8,2) # S,n_order+1,2
+                    for pm in valid_param:
+                        coef_x["a3"].append(pm[0])
+                        coef_x["a2"].append(pm[1])
+                        coef_x["a1"].append(pm[2])
+                        coef_x["a0"].append(pm[3])
+
+                        coef_y["b3"].append(pm[4])
+                        coef_y["b2"].append(pm[5])
+                        coef_y["b1"].append(pm[6])
+                        coef_y["b0"].append(pm[7])
+        
+        dist.barrier()
+        for key in coef_x:
+            coef_x[key] = torch.tensor(coef_x[key], device='cuda') # dict[key,val=tensor]
+        for key in coef_y:
+            coef_y[key] = torch.tensor(coef_y[key], device='cuda')
+
+        print(coef_x['a3'])
+        # 存储结果的字典
+        rounded_counts = {} 
+        for key, tensor in coef_x.items():
+            # 对 tensor 数据进行转换
+            rounded_tensor = torch.round(tensor * 5)/5
+            # rounded_tensor = tensor
+            
+            # 统计转换后的值出现的次数
+            unique_values, counts = torch.unique(rounded_tensor, return_counts=True)
+            
+            # 将结果存储到字典中
+            rounded_counts[key] = dict(zip(unique_values.tolist(), counts.tolist())) # 两层dict, key: p  val: count_dict
+
+        # 将统计结果存储到文件中
+        with open("/private/wangchen/instance_model/my/analyse_coef/polynomial_coef_count_x_boxplot.json", "w") as f:
+            json.dump(rounded_counts, f, indent=4)
+
+
         
 if __name__ == "__main__":
     args = main_parser_for_evel()
@@ -542,7 +597,7 @@ if __name__ == "__main__":
         set_seed(seed_value=7777)
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-28 17:13:02_back/saved_models"
-    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-12 18:59:30_front_mlp_traj_decoder/saved_models"
+    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-13 20:49:27_front_多项式/saved_models"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
     pts = pts[::-1]
@@ -555,7 +610,8 @@ if __name__ == "__main__":
 
 
     piple = Evaluator(args,logger, test_latency=False)
-    piple._evaluate_loop(pts=pts)
+    # piple._evaluate_loop(pts=pts)
+    piple.get_coef_distribute_polynomial(pt=pts[0])
     # piple.test_latency_for_instances(pt=pts[0]) # !!!!!!!!! attenion gpu set to 1
             
 
