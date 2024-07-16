@@ -5,7 +5,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from tensorboardX import SummaryWriter
-import time
+import time, json
 import os
 import datetime
 import tqdm
@@ -461,9 +461,6 @@ class Evaluator(object):
     def test_latency_for_instances(self, pt, mode='test'):
         logger.info(f"\ninstance_num,all_agent_num,map_elem_num,agent_refpath_num,mean_time")
 
-        """
-        在测试集上对模型进行验证，计算准确率和对应的损失
-        """
         print(f"evaluate {pt} 's latency")
         torch.cuda.empty_cache()
         self._load_or_restart("eval", pt)
@@ -532,8 +529,78 @@ class Evaluator(object):
                 # print(times)
                 # print(times[10:].mean(-1).item())
 
+    def get_coef_distribute_bezier(self, pt, mode='test'):
+        self._load_or_restart("eval", pt)
+        self.net.eval()  # evaluation mode
+        torch.manual_seed(42)
 
- 
+        total_iter_each_epoch = len(self.data_loaders[mode])
+        dataloader_iter = iter(self.data_loaders[mode])
+        coef_x = {"p0":[],"p1":[],"p2":[],"p3":[],"p4":[],"p5":[],"p6":[],"p7":[]}
+        coef_y = {"p0":[],"p1":[],"p2":[],"p3":[],"p4":[],"p5":[],"p6":[],"p7":[]}
+        with torch.no_grad():
+            with tqdm.trange(0, total_iter_each_epoch, desc='eval_epochs', dynamic_ncols=True, leave=(self.args.local_rank == 0)) as pbar:
+                for cur_it in pbar:# 一个循环是一个iter，所有的iter组成一个epoch，会有dataset_num/batch_size = iterion次循环前向传播.这里计算是将每个iter的metric累加，最后求平均
+                    input_dict = next(dataloader_iter)
+                    output_dict = self.net(input_dict)
+                    param = output_dict['param'] # B,N,3M,(n_order+1)*2
+                    all_candidate_mask = output_dict['all_candidate_mask'] # B,N,3M
+                    valid_param = param[all_candidate_mask] # S,(n_order+1)*2
+                    valid_num = valid_param.shape[0]
+                    valid_param = valid_param.reshape(valid_num,8,2) # S,n_order+1,2
+                    for pm in valid_param:
+                        coef_x["p0"].append(pm[0][0])
+                        coef_x["p1"].append(pm[1][0])
+                        coef_x["p2"].append(pm[2][0])
+                        coef_x["p3"].append(pm[3][0])
+                        coef_x["p4"].append(pm[4][0])
+                        coef_x["p5"].append(pm[5][0])
+                        coef_x["p6"].append(pm[6][0])
+                        coef_x["p7"].append(pm[7][0])
+
+                        coef_y["p0"].append(pm[0][1])
+                        coef_y["p1"].append(pm[1][1])
+                        coef_y["p2"].append(pm[2][1])
+                        coef_y["p3"].append(pm[3][1])
+                        coef_y["p4"].append(pm[4][1])
+                        coef_y["p5"].append(pm[5][1])
+                        coef_y["p6"].append(pm[6][1])
+                        coef_y["p7"].append(pm[7][1])
+        
+        dist.barrier()
+        for key in coef_x:
+            coef_x[key] = torch.tensor(coef_x[key], device='cuda') # dict[key,val=tensor]
+        for key in coef_y:
+            coef_y[key] = torch.tensor(coef_y[key], device='cuda')
+
+        # 存储结果的字典
+        rounded_counts = {} 
+        for key, tensor in coef_x.items():
+            # 对 tensor 数据进行转换
+            rounded_tensor = torch.round(tensor)
+            
+            # 统计转换后的值出现的次数
+            unique_values, counts = torch.unique(rounded_tensor, return_counts=True)
+            
+            # 将结果存储到字典中
+            rounded_counts[key] = dict(zip(unique_values.tolist(), counts.tolist())) # 两层dict, key: p  val: count_dict
+
+        # 将统计结果存储到文件中
+        with open("/private/wangchen/instance_model/my/analyse_coef/rounded_counts_x.json", "w") as f:
+            json.dump(rounded_counts, f, indent=4)
+
+
+        # rounded_counts = {}
+        # for key,tensor in coef_y.items():
+
+        #     rounded_tensor = torch.round(tensor)
+        #     unique_values, counts = torch.unique(rounded_tensor, return_counts=True)
+        #     rounded_counts[key] = dict(zip(unique_values.tolist(), counts.tolist()))
+
+        # for key, counts in rounded_counts.items():
+        #     print(f"Column: {key}")
+        #     for value, count in counts.items():
+        #         print(f"  Value {value}: {count} times")
         
 if __name__ == "__main__":
     args = main_parser_for_evel()
@@ -542,7 +609,7 @@ if __name__ == "__main__":
         set_seed(seed_value=7777)
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
     # pt_dir = "/private/wangchen/instance_model/output/MODEL/2024-06-28 17:13:02_back/saved_models"
-    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-12 08:54:33_front_6/saved_models"
+    pt_dir = "/private/wangchen/instance_model/my/output/MODEL/2024-07-02 23:45:29_front(最新15w数据训练得到)/saved_models"
     pts = [os.path.join(pt_dir, pt_file) for pt_file in os.listdir(pt_dir)]
     pts.sort()
     pts = pts[::-1]
@@ -555,7 +622,8 @@ if __name__ == "__main__":
 
 
     piple = Evaluator(args,logger, test_latency=False)
-    piple._evaluate_loop(pts=pts)
+    # piple._evaluate_loop(pts=pts)
+    piple.get_coef_distribute_bezier(pt=pts[0])
     # piple.test_latency_for_instances(pt=pts[0]) # !!!!!!!!! attenion gpu set to 1
             
 

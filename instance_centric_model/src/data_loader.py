@@ -35,7 +35,7 @@ class InterDataSet(Dataset):
             if test_latency == True:
                 self.ids = self.ids[:100]
             else:
-                self.ids = self.ids[:30000]
+                self.ids = self.ids[:3000]
             # self.ids = self.ids[:300]
         
     def __len__(self):
