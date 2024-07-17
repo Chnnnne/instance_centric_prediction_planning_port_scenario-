@@ -384,6 +384,7 @@ def calculate_jerk_new(trajectories):
     返回:
     """
     B, N, T, _ = trajectories.shape
+    trajectories = trajectories[:,:,::10]
 
     # 提取 x 和 y 坐标
     x = trajectories[..., 0]
@@ -417,6 +418,7 @@ def calculate_curvature_new(trajectories):
     返回:
     """
     B, N, T, _ = trajectories.shape # B,W,50,2
+    trajectories = trajectories[:,:,::10]
 
     # 提取 x 和 y 坐标
     x = trajectories[..., 0]
@@ -446,6 +448,7 @@ def calculate_lateral_new(trajectories):
     返回:
     """
     B, N, T, _ = trajectories.shape
+    trajectories = trajectories[:,:,::10]
 
     # 提取 x 和 y 坐标
     x = trajectories[..., 0]
