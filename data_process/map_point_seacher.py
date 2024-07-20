@@ -212,17 +212,17 @@ class MapPointSeacher():
             before_cords = copy.deepcopy(refpaths_cord)
             refpaths_cord, kd_trees, keep_traj_idx, Z = self.cluster_refpath(refpaths_cord, return_Z=True)
             after_cords = copy.deepcopy(refpaths_cord)
-            if len(before_cords) != len(after_cords) and len(before_cords) - len(after_cords) > 6:
-                if debug_info != None:
-                    rand_n = random.randint(1,10000)
-                    plot_utils.draw_candidate_refpaths(ori, refpaths_cord = before_cords, text=f"{debug_info}_rand{rand_n}_cluster{len(before_cords) - len(after_cords)}", draw_info=draw_info)
-                    plot_utils.draw_candidate_refpaths(ori, refpaths_cord = after_cords,  text=f"{debug_info}_rand{rand_n}_cluster{len(before_cords) - len(after_cords)}", draw_info=draw_info)
-                    fig,ax = plt.subplots(figsize=(10,10),dpi=200)
-                    dendrogram(Z, ax=ax)
-                    ax.axhline(y=4.5, c='k', ls='--', lw=0.5)
-                    fig.savefig(f'/data/wangchen/instance_centric/data_process/tmp/candidate_refpath_{debug_info}_rand{rand_n}_dendrogram.jpg')
-                    print("draw a pair")
-                    print("11"*100)
+            # if len(before_cords) != len(after_cords) and len(before_cords) - len(after_cords) > 6:
+            #     if debug_info != None:
+            #         rand_n = random.randint(1,10000)
+            #         plot_utils.draw_candidate_refpaths(ori, refpaths_cord = before_cords, text=f"{debug_info}_rand{rand_n}_cluster{len(before_cords) - len(after_cords)}", draw_info=draw_info)
+            #         plot_utils.draw_candidate_refpaths(ori, refpaths_cord = after_cords,  text=f"{debug_info}_rand{rand_n}_cluster{len(before_cords) - len(after_cords)}", draw_info=draw_info)
+            #         fig,ax = plt.subplots(figsize=(10,10),dpi=200)
+            #         dendrogram(Z, ax=ax)
+            #         ax.axhline(y=4.5, c='k', ls='--', lw=0.5)
+            #         fig.savefig(f'/data/wangchen/instance_centric/data_process/tmp/candidate_refpath_{debug_info}_rand{rand_n}_dendrogram.jpg')
+            #         print("draw a pair")
+            #         print("11"*100)
 
 
 

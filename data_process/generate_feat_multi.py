@@ -1,7 +1,6 @@
-import os,bisect,itertools,math,sys,pickle,time,multiprocessing
+import os,bisect,itertools,math,sys,pickle,time,multiprocessing, shutil
 import numpy as np
 import pandas as pd
-
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
@@ -14,6 +13,7 @@ if project_path not in sys.path:
     print(f"add project_path:{project_path} to python search path")
 import common.math_utils as math_utils
 import common.plot_utils as plot_utils
+from common.map_utils import SingletonMapMethod
 
 from loguru import logger
 
@@ -801,6 +801,14 @@ def load_seq_save_features(index):
         surr_ids, target_ids = get_agent_ids(data_info, cur_t)
         if len(target_ids) == 0: 
             continue
+        if len(surr_ids) + len(target_ids) <= 2: 
+            continue
+        scene_list = smm.get_scenes(x=ego_info['x'][i],y=ego_info['y'][i],distance=40)
+        # print(scene_list)
+        # exit()
+        if "PORT_CROSS_ROAD" not in scene_list:
+            continue
+
 
         # 计算目标障碍物的目标点等特征
         # tar_candidate, gt_preds, gt_candts, gt_tar_offset, candidate_mask = generate_future_feats(data_info, target_ids)
@@ -870,9 +878,12 @@ def load_seq_save_features(index):
         feat_data['agent_feats'][~feat_data['agent_mask'].astype(bool)] = 0
 
 
-        feat_data['agent_feats_for_vis'] = agent_feats_for_vis # (all_n, 13) x,y,yaw,length,width,vel, has_trailer, track_id, trailer_x, trailer_y, trailer_yaw, trailer_length, trailer_width
-        feat_data['ego_feats_for_vis'] = ego_feats_for_vis# (6) x,y,yaw,vel,has_trailer, tralier_angle
-        print(agent_feats_for_vis.shape);print(ego_feats_for_vis.shape)
+        feat_data['agent_feats_for_vis'] = agent_feats_for_vis.astype(np.float32) #绝对坐标系 (all_n, 13) x,y,yaw,length,width,vel, has_trailer, track_id, trailer_x, trailer_y, trailer_yaw, trailer_length, trailer_width
+        feat_data['ego_feats_for_vis'] = ego_feats_for_vis.astype(np.float32) # (6) x,y,yaw,vel,has_trailer, tralier_angle
+        # print(agent_feats_for_vis.shape);print(ego_feats_for_vis.shape)
+        # feat_data['pickle_path'] = pickle_path
+        # feat_data['index'] = i
+
         
 
         feat_data['ego_refpath_cords'] = ego_refpath_cords.astype(np.float32) # (M,20,2)
@@ -892,11 +903,7 @@ def load_seq_save_features(index):
         feat_data['candidate_refpaths_cords'][~feat_data['candidate_mask'].astype(bool)] = 0
         feat_data['candidate_refpaths_vecs'][~feat_data['candidate_mask'].astype(bool)] = 0
 
-        # feat_data['tar_candidate'] = pad_tar_candidate.astype(np.float32)
-        # feat_data['candidate_mask'] = pad_candidate_mask.astype(np.int32)
-        # feat_data['gt_preds'] = pad_gt_preds.astype(np.float32)
-        # feat_data['gt_candts'] = pad_gt_candts.astype(np.float32)
-        # feat_data['gt_tar_offset'] = pad_gt_tar_offset.astype(np.float32)
+
         feat_data['plan_feat'] = pad_plan_feat.astype(np.float32) # [all_n, 50, 4]   
         feat_data['plan_mask'] = pad_plan_mask.astype(np.int32)  # [all_n, 50]
         feat_data['map_ctrs'] = map_ctrs.astype(np.float32) # map_element_num, 2
@@ -911,18 +918,23 @@ def load_seq_save_features(index):
 
         feat_data['rpe'] = rpe.astype(np.float32)
         feat_data['rpe_mask'] = rpe_mask.astype(np.int32)
-        save_path = str(cur_output_path) + f'/{vehicle_name}_{cur_t}.pkl'
-        check_dict = {"agent_feats":feat_data['agent_feats'], "agent_vecs":feat_data['agent_vecs'], 
-                      "ego_refpath_cords":feat_data['ego_refpath_cords'], "ego_refpath_vecs": feat_data['ego_refpath_vecs'],"ego_gt_traj":feat_data['ego_gt_traj'],
-                    "candidate_refpaths_cords": feat_data['candidate_refpaths_cords'], "candidate_refpaths_vecs":feat_data['candidate_refpaths_vecs'],
-                    "gt_preds":feat_data['gt_preds'], "map_feats":feat_data['map_feats']
-        }
-        if check_nan_inf_abnormal(check_dict, other_info = f"pickle_path:{pickle_path}, i:{i}"):
-            continue
+        save_path = str(cur_output_path) + f"/orgin_pkl:{pickle_path.split('/')[-1].replace('.','_')}_pkl_frame_{i}_target_num{len(target_ids)}_surr_num{len(surr_ids)}.pkl"
+
         with open(save_path, 'wb') as f:
             pickle.dump(feat_data, f)
             print(f"file_index:{index}, i:{i}, pkl saved at{save_path}")
             print("$"*80)
+
+        pkl_name = os.path.basename(pickle_path) 
+        destination_path = os.path.join(interest_origin_log_path, pkl_name)
+        # 检查文件是否已经存在于目标路径中
+        if os.path.exists(destination_path):
+            print(f'文件 {destination_path} 已存在，不进行复制')
+            pass
+        else:
+            # 复制文件
+            shutil.copy(pickle_path, destination_path)
+            print(f'文件已成功复制到 {destination_path}')
 
     return
 
@@ -936,28 +948,29 @@ if __name__=="__main__":
     HDMapManager.LoadMap(map_file_path, scene_type)
     hdmap = HDMapManager.GetHDMap()
     mp_seacher = MapPointSeacher(hdmap, t=5.0)
+    smm = SingletonMapMethod()
     
     # input_path = '/private2/wanggang/pre_log_inter_data'
     input_path = '/private/wangchen/instance_model/pre_log_inter_data_small'
     all_file_list = [os.path.join(input_path, file) for file in os.listdir(input_path)]
-    all_file_list = all_file_list[:int(len(all_file_list))]
-    train_files, test_files = train_test_split(all_file_list, test_size=0.2, random_state=42)
+    all_file_list = all_file_list[:1]
     cur_files = all_file_list
     print(f"共需处理{len(cur_files)}个pkl")# 1w+
     
     # cur_output_path = '/private/wangchen/instance_model/instance_model_data_small/train'
-    cur_output_path = '/private/wangchen/instance_model/instance_model_data_test_data_generate_latency/pkl/'
+    cur_output_path = '/private/wangchen/instance_model/my/cases/feat_pkls/'
+    interest_origin_log_path = "/private/wangchen/instance_model/my/cases/interest_origin_log/"
     cur_output_path = Path(cur_output_path)
     if not cur_output_path.exists():
         cur_output_path.mkdir(parents=True)
 
-    # pool = multiprocessing.Pool(processes=16)
-    # pool.map(load_seq_save_features, range(len(cur_files)))
+    pool = multiprocessing.Pool(processes=16)
+    pool.map(load_seq_save_features, range(len(cur_files)))
 
-    for i in range(len(cur_files) -25 ,0,-1): # 19 error 21 draw
-        print("--"*20, i)
+    # for i in range(len(cur_files) -25 ,0,-1): # 19 error 21 draw
+    #     print("--"*20, i)
     #     # my_candidate_refpath_search_test(i)
-        load_seq_save_features(i)
+        # load_seq_save_features(i)
 
     # print("###########完成###############")
     # pool.close()
